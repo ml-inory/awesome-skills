@@ -1,5 +1,5 @@
 ---
-name: test_augment
+name: test-augment
 description: 为刚完成的重构新增独立测试用例并运行验证，适用于 refactor 工作流中需要覆盖等价性、边界、性能回归或接口契约时
 ---
 

@@ -12,14 +12,14 @@ TRIGGER when: user mentions 板子, 找板子, 上板子, 跑一下, remote boar
 ## 用法
 
 ```
-/remote-infer [--chip AX650N|AX630C|AX650C] <任务描述>
+$remote-infer [--chip AX650N|AX630C|AX650C] <任务描述>
 ```
 
 任务举例：
-- 跑 axmodel 推理：`/remote-infer model.axmodel [--input data.npy]`
-- 部署服务：`/remote-infer 部署 my-server`
-- 挂载本地目录：`/remote-infer mount /local/path`
-- 执行任意命令：`/remote-infer 执行 echo hello`
+- 跑 axmodel 推理：`$remote-infer model.axmodel [--input data.npy]`
+- 部署服务：`$remote-infer 部署 my-server`
+- 挂载本地目录：`$remote-infer mount /local/path`
+- 执行任意命令：`$remote-infer 执行 echo hello`
 
 ## 执行步骤
 
@@ -47,7 +47,7 @@ print(json.dumps({'ip': d['ip'], 'hostname': d['hostname'], 'chip_type': d['chip
 
 | 场景 | 做法 |
 |------|------|
-| 跑 axmodel 推理 | 先 [ensure-daemon](../hidden/ensure-daemon/SKILL.md)，再 [run-model](../hidden/run-model/SKILL.md) |
+| 跑 axmodel 推理 | 先 [ensure-daemon](hidden/ensure-daemon/SKILL.md)，再 [run-model](hidden/run-model/SKILL.md) |
 | 部署服务 / 执行命令 | `ssh root@<IP> '<command>'` |
 | 上传文件 | `scp <local> root@<IP>:<remote>` |
 | 挂载本地目录到板子 | `ssh root@<IP> 'mount -t nfs ...'` 或按需选方案 |

@@ -6,7 +6,7 @@ description: 稳步重构遗留代码，向指定目标（速度/体积）优化
 # Refactor - 入口 Skill
 
 ## 触发方式
-用户调用 `/refactor`。
+用户调用 `$refactor`（Codex）或 `/refactor`（Claude Code）。
 
 ## 行为
 
@@ -21,10 +21,10 @@ description: 稳步重构遗留代码，向指定目标（速度/体积）优化
 | 重构范围 | 限定到子目录（可选） | 用户自行输入路径，默认全项目 |
 | 最大轮次 | 最多执行几轮重构（可选） | 默认 10 |
 
-2. **按顺序执行**如下隐藏流水线（每个工序的详细指令见 `.claude/skills/refactor/hidden/<工序名>/SKILL.md`）：
+2. **按顺序执行**如下隐藏流水线（每个工序的详细指令见 `hidden/<工序名>/SKILL.md`）：
 
 ```
-baseline --> scanner --> ranker --> [refactor_one --> test_augment --> validator] x N
+baseline --> scanner --> ranker --> [refactor-one --> test-augment --> validator] x N
                                          ^______ rollback on failure ________|
 ```
 
