@@ -1,3 +1,8 @@
+---
+name: ensure-daemon
+description: 当目标 AX 板 TCP 18500 不通时下载、安装并启动 ax_remote_infer daemon，然后验证远程推理端口可用
+---
+
 # ensure-daemon（内部工序）
 
 当 TCP 18500 不通时，在目标板子上安装并启动 ax_remote_infer daemon。

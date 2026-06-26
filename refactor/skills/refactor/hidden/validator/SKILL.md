@@ -1,3 +1,8 @@
+---
+name: validator
+description: 对每轮重构执行全量测试、性能或体积提升、lint 和 type check 的三重验证门控，失败时触发回滚
+---
+
 # Validator（隐藏 Skill）
 
 ## 职责

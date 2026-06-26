@@ -1,3 +1,8 @@
+---
+name: run-model
+description: 通过 pyaxengine RemoteAXExecutionProvider 在指定 AX 板上运行 axmodel，支持零输入或本地输入文件并输出 JSON 结果
+---
+
 # run-model（内部工序）
 
 通过 pyaxengine RemoteAXExecutionProvider 在选定板子上运行 axmodel。

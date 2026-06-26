@@ -1,3 +1,8 @@
+---
+name: scanner
+description: 只读扫描代码库并识别 speed 或 size 优化机会，输出带收益、风险、置信度和依赖关系的结构化机会列表
+---
+
 # Opportunity Scanner（隐藏 Skill）
 
 ## 职责

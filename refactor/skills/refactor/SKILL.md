@@ -1,4 +1,5 @@
 ---
+name: refactor
 description: 稳步重构遗留代码，向指定目标（速度/体积）优化
 ---
 

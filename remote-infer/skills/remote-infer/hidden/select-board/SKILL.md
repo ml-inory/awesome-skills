@@ -1,3 +1,8 @@
+---
+name: select-board
+description: 查询内网设备 dashboard 并选择一块空闲 AX 板，返回板子的 IP、hostname 和芯片型号连接信息
+---
+
 # select-board（内部工序）
 
 查询内网设备 dashboard，返回一块空闲 AX 板的连接信息。

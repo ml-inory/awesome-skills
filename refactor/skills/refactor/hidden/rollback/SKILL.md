@@ -1,3 +1,8 @@
+---
+name: rollback
+description: 当重构验证失败时干净回滚本轮变更、删除失败分支、清理新增测试并记录失败原因
+---
+
 # Rollback（隐藏 Skill）
 
 ## 职责

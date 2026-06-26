@@ -1,3 +1,8 @@
+---
+name: refactor_one
+description: 针对单个优化机会执行最小化且 API 兼容的代码重构，适用于 refactor 工作流逐个处理执行队列项时
+---
+
 # Refactor One（隐藏 Skill）
 
 ## 职责

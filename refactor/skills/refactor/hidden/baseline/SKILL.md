@@ -1,3 +1,8 @@
+---
+name: baseline
+description: 在重构开始前捕获代码库基线状态，运行现有测试、lint、type check、benchmark 和体积度量作为后续对比依据
+---
+
 # Baseline Snapshot（隐藏 Skill）
 
 ## 职责

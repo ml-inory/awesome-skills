@@ -1,4 +1,5 @@
 ---
+name: remote-infer
 description: 在内网找空闲 AX 板子，在上面执行任意任务
 ---
 

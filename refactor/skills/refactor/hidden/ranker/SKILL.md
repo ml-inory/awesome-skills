@@ -1,3 +1,8 @@
+---
+name: ranker
+description: 对扫描出的重构优化机会按 ROI、风险和依赖关系排序，生成高收益低风险优先的执行队列
+---
+
 # Opportunity Ranker（隐藏 Skill）
 
 ## 职责
