@@ -12,6 +12,12 @@ Claude Code 技能集合，通过 `/skill-name` 调用。
 
 ## 安装
 
+**Claude Code**（安装到 `~/.claude/skills/`）：
 ```bash
 ./setup.sh
+```
+
+**Codex**（安装到 `~/.agents/skills/`）：
+```bash
+./setup.sh --codex
 ```

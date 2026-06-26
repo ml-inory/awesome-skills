@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
-SKILLS_DIR="$HOME/.claude/skills"
+if [ "$1" = "--codex" ]; then
+    SKILLS_DIR="$HOME/.agents/skills"
+else
+    SKILLS_DIR="$HOME/.claude/skills"
+fi
 mkdir -p "$SKILLS_DIR"
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
