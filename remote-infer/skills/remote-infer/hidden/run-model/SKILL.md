@@ -10,8 +10,25 @@
 ## 执行
 
 ```bash
-python core/infer.py <MODEL_PATH> --host <BOARD_IP> [--input <INPUT_FILE>]
+python3 -c "
+import json, sys, numpy as np
+try:
+    import axengine as axe
+except ImportError:
+    print('ERROR: axengine not installed. Run: pip install axengine-*.whl', file=sys.stderr); sys.exit(1)
+sess = axe.InferenceSession('<MODEL_PATH>',
+    providers=['RemoteAXExecutionProvider'],
+    provider_options={'host': '<BOARD_IP>', 'port': '18500'})
+in_meta = sess.get_inputs()
+# 有输入文件时: data = np.load('<INPUT_FILE>', allow_pickle=True)
+feeds = {m.name: np.zeros(m.shape, dtype=np.float32) for m in in_meta}
+outputs = sess.run(None, feeds)
+out_meta = sess.get_outputs()
+print(json.dumps({m.name: o.tolist() for m, o in zip(out_meta, outputs)}, indent=2))
+"
 ```
+
+将 `<MODEL_PATH>`、`<BOARD_IP>`（以及可选的 `<INPUT_FILE>`）替换为实际值后执行。
 
 参数说明：
 - `MODEL_PATH`：本地 .axmodel 文件，pyaxengine 自动上传到板子

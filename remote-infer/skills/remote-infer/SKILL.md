@@ -1,62 +1,59 @@
 ---
-description: 在内网找空闲 AX 板子运行 axmodel 推理
+description: 在内网找空闲 AX 板子，在上面执行任意任务
 ---
 
 # remote-infer
 
-TRIGGER when: user mentions running/testing axmodel on a board, "找板子", "跑一下", "板子推理", "remote infer", or asks to test a .axmodel file.
+TRIGGER when: user mentions 板子, 找板子, 上板子, 跑一下, remote board, AX board, or wants to do anything on a board (deploy, run, mount, infer, ssh, etc.).
 
-在内网找一块空闲 AX 板子，上传并运行 axmodel，返回推理结果。
+在内网找一块空闲 AX 板子，通过 SSH 执行用户指定的任务。
 
 ## 用法
 
 ```
-/remote-infer <model.axmodel> [--chip AX650N|AX630C|AX650C] [--input data.npy]
+/remote-infer [--chip AX650N|AX630C|AX650C] <任务描述>
 ```
 
-| 参数 | 必填 | 说明 |
-|------|------|------|
-| `<model.axmodel>` | 是 | 本地 axmodel 文件路径 |
-| `--chip` | 否 | 指定芯片型号；不填则选任意空闲 AX 板 |
-| `--input` | 否 | 输入数据文件（.npy 或 .npz）；不填则用全零张量做功能验证 |
+任务举例：
+- 跑 axmodel 推理：`/remote-infer model.axmodel [--input data.npy]`
+- 部署服务：`/remote-infer 部署 my-server`
+- 挂载本地目录：`/remote-infer mount /local/path`
+- 执行任意命令：`/remote-infer 执行 echo hello`
 
 ## 执行步骤
 
-按顺序执行以下工序（对用户透明）：
-
 ### Step 1 — 选板
 
-运行 `core/board_client.py`，从内网 dashboard 找空闲 AX 板：
-
 ```bash
-python core/board_client.py [--chip <CHIP_TYPE>]
+python3 -c "
+import json, sys, requests
+devices = requests.get('http://10.126.35.22:25000/api/devices', timeout=5).json()['devices']
+candidates = [d for d in devices if d['is_ax'] and not d['is_occupied']]
+if not candidates:
+    print('ERROR: no available AX board', file=sys.stderr); sys.exit(1)
+candidates.sort(key=lambda d: d.get('cmm_used_percent') or 100)
+d = candidates[0]
+print(json.dumps({'ip': d['ip'], 'hostname': d['hostname'], 'chip_type': d['chip_type']}))
+"
 ```
 
-- 输出 JSON：`{"ip": "...", "hostname": "...", "chip_type": "..."}`
-- 若无可用板子：打印错误并中止，提示用户稍后重试
+输出 JSON：`{"ip": "...", "hostname": "...", "chip_type": "..."}`
+若无可用板子，打印错误并中止。
 
-### Step 2 — 检查 daemon
+### Step 2 — 执行任务
 
-对选中板子的 `<ip>:18500` 做 TCP 连通性测试：
+根据用户意图选择方式：
 
-```bash
-python -c "import socket,sys; s=socket.socket(); s.settimeout(3); r=s.connect_ex(('<IP>', 18500)); s.close(); sys.exit(r)"
-```
+| 场景 | 做法 |
+|------|------|
+| 跑 axmodel 推理 | 先 [ensure-daemon](../hidden/ensure-daemon/SKILL.md)，再 [run-model](../hidden/run-model/SKILL.md) |
+| 部署服务 / 执行命令 | `ssh root@<IP> '<command>'` |
+| 上传文件 | `scp <local> root@<IP>:<remote>` |
+| 挂载本地目录到板子 | `ssh root@<IP> 'mount -t nfs ...'` 或按需选方案 |
+| 挂载板子目录到本地 | `sshfs root@<IP>:<remote> <local_mountpoint>` |
 
-- **返回 0**（端口通）→ daemon 已就绪，跳到 Step 3
-- **返回非 0**（端口不通）→ 执行 [ensure-daemon](../hidden/ensure-daemon/SKILL.md)
+默认 SSH 凭据：用户 `root`，密码 `123456`（或 SSH key）。
 
-### Step 3 — 运行推理
+## 输出
 
-```bash
-python core/infer.py <model.axmodel> --host <IP> [--input <data.npy>]
-```
-
-输出 JSON，结构为 `{output_name: [[...]]}` 。
-
-## 输出格式
-
-向用户展示：
-1. 选中的板子（IP、芯片型号、主机名）
-2. 推理输出（各输出张量的 shape 与前几个值）
-3. 如有 `device_inference_us` 字段，显示推理耗时
+展示选中的板子（IP、芯片型号、主机名）+ 任务执行结果。

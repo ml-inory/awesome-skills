@@ -40,5 +40,5 @@ python -c "import socket,sys; s=socket.socket(); s.settimeout(5); r=s.connect_ex
 
 ## 注意
 
-- 默认 SSH 用户 `root`，密码 `root`（或询问用户）
+- 默认 SSH 用户 `root`，密码 `123456`（或询问用户）
 - 需要本机安装 `sshpass`（`apt install sshpass`）或使用 SSH key

@@ -5,7 +5,28 @@
 ## 执行
 
 ```bash
-python core/board_client.py [--chip <CHIP_TYPE>] [--list]
+python3 -c "
+import json, sys, requests
+devices = requests.get('http://10.126.35.22:25000/api/devices', timeout=5).json()['devices']
+candidates = [d for d in devices if d['is_ax'] and not d['is_occupied']]
+# 若需过滤芯片型号，在此加: candidates = [d for d in candidates if 'AX650N' in d['chip_type'].upper()]
+if not candidates:
+    print('ERROR: no available AX board', file=sys.stderr); sys.exit(1)
+candidates.sort(key=lambda d: d.get('cmm_used_percent') or 100)
+d = candidates[0]
+print(json.dumps({'ip': d['ip'], 'hostname': d['hostname'], 'chip_type': d['chip_type']}))
+"
+```
+
+若需查看所有板子状态：
+
+```bash
+python3 -c "
+import requests
+for d in requests.get('http://10.126.35.22:25000/api/devices', timeout=5).json()['devices']:
+    if d['is_ax']:
+        print(d['ip'], d['chip_type'], 'OCCUPIED' if d['is_occupied'] else 'free')
+"
 ```
 
 ## 选板规则
