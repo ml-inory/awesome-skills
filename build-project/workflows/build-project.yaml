@@ -1,0 +1,548 @@
+workflow:
+  schema_version: "1.0"
+  name: "build-project"
+  entry_skill: "skills/build-project/SKILL.md"
+  mode: "guided"
+  task_type: "hybrid"
+  visibility: "collapsed_by_default"
+  requirement:
+    goal: "Implement a user-supplied development goal through small, reviewable iterations that end in a pull request."
+    output:
+      format: "modified code, GitHub issues, commits, pull request, .build-state.json audit trail, final report"
+      destination: "target repository, GitHub repository, and final response"
+      consumer: "both"
+    constraints:
+      time_budget: "bounded by user goal size, validation command runtime, and review-gate continuation decisions"
+      cost_budget: "local tooling and GitHub CLI only unless the user explicitly approves other services"
+      technology:
+        - "python"
+        - "javascript"
+        - "typescript"
+        - "go"
+        - "make"
+        - "other repository stacks when user supplies commands"
+      security:
+        - "do not guess credentials or private service access"
+        - "do not deploy, publish, or run production operations"
+        - "do not automatically merge pull requests"
+        - "preserve unrelated worktree changes"
+      human_approval_required: true
+    acceptance:
+      checks:
+        - "goal is known before side effects"
+        - "stack and validation command are known or safely inferred"
+        - "each iteration has one issue with acceptance checks"
+        - "only scoped files are edited and staged"
+        - "tests pass before normal commits"
+        - "force commits require explicit user choice"
+        - "final PR is created and not automatically merged"
+      metrics:
+        - "iteration count"
+        - "issue count"
+        - "test command status"
+        - "commit count"
+        - "PR URL availability"
+      required_artifacts:
+        - ".build-state.json during the run"
+        - "GitHub issue per iteration"
+        - "commit per accepted iteration"
+        - "pull request URL when completed"
+        - "final report"
+    assumptions:
+      - "The workflow runs inside a git worktree."
+      - "The repository uses GitHub when issue and PR steps are required."
+      - "The GitHub CLI is authenticated when external issue and PR artifacts are required."
+      - "Low-risk stack and validation defaults may be inferred from repository metadata."
+    open_questions: []
+  capabilities:
+    - id: "build-project-init"
+      purpose: "Initialize run state, detect stack and validation, create feature branch."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/init/SKILL.md"
+      permissions: ["read repository", "execute git commands", "write .build-state.json"]
+      required: true
+    - id: "build-project-spec"
+      purpose: "Slice the goal into one issue with acceptance checks."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/spec/SKILL.md"
+      permissions: ["read .build-state.json", "create GitHub issues", "write .build-state.json"]
+      required: true
+    - id: "build-project-code"
+      purpose: "Implement the current issue with scoped code changes."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/code/SKILL.md"
+      permissions: ["read repository", "edit scoped files", "comment on GitHub issues"]
+      required: true
+    - id: "build-project-test"
+      purpose: "Run validation command and record pass/fail evidence."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/test/SKILL.md"
+      permissions: ["execute local validation commands", "comment on GitHub issues", "write .build-state.json"]
+      required: true
+    - id: "build-project-commit"
+      purpose: "Commit one validated iteration without staging unrelated files."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/commit/SKILL.md"
+      permissions: ["execute git add/commit for scoped files", "comment on GitHub issues", "write .build-state.json"]
+      required: true
+    - id: "build-project-review-gate"
+      purpose: "Make continue, repair, redesign, force-commit, rollback, or done decisions explicit."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/review-gate/SKILL.md"
+      permissions: ["read .build-state.json", "ask user for decisions", "write .build-state.json"]
+      required: true
+    - id: "build-project-merge"
+      purpose: "Create a pull request and stop before merging."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/merge/SKILL.md"
+      permissions: ["read .build-state.json", "create GitHub pull request", "write .build-state.json"]
+      required: true
+    - id: "build-project-rollback"
+      purpose: "Rollback abandoned iteration changes while preserving unrelated work."
+      source: "generate"
+      skill_path: "skills/build-project/hidden/rollback/SKILL.md"
+      permissions: ["inspect git status", "revert scoped current-iteration changes", "write .build-state.json"]
+      required: true
+    - id: "git"
+      purpose: "Manage branch, diffs, staging, commits, and rollback boundaries."
+      source: "external"
+      skill_path: ""
+      permissions: ["local git commands"]
+      required: true
+    - id: "github-cli"
+      purpose: "Create issues, comments, and pull requests."
+      source: "external"
+      skill_path: ""
+      permissions: ["gh issue", "gh pr"]
+      required: true
+  inputs:
+    - id: "goal"
+      type: "text"
+      required: true
+      source: "user"
+      validation: ["non-empty", "specific enough to slice into testable iterations"]
+    - id: "stack"
+      type: "text"
+      required: false
+      source: "user"
+      validation: ["supported or inferable from repository metadata"]
+    - id: "base_branch"
+      type: "text"
+      required: false
+      source: "environment"
+      validation: ["existing branch or repository default branch"]
+    - id: "validation_command"
+      type: "text"
+      required: false
+      source: "user"
+      validation: ["local command", "non-destructive"]
+    - id: "github_auth"
+      type: "credential"
+      required: true
+      source: "environment"
+      validation: ["gh auth status succeeds", "repository issue and PR permissions are available"]
+    - id: "review_decision"
+      type: "user_decision"
+      required: true
+      source: "user"
+      validation: ["one of continue, done, retry_code, retry_spec, force_commit, rollback"]
+  outputs:
+    - id: "modified_code"
+      type: "code"
+      destination: "target repository"
+      required: true
+      validation: ["only scoped iteration changes are retained"]
+    - id: "build_state"
+      type: "json"
+      destination: ".build-state.json during run"
+      required: true
+      validation: ["valid JSON", "records goal, branch, iterations, issues, tests, commits, decisions"]
+    - id: "github_issues"
+      type: "text"
+      destination: "GitHub repository"
+      required: true
+      validation: ["one issue per iteration", "acceptance checks included"]
+    - id: "commits"
+      type: "text"
+      destination: "feature branch"
+      required: true
+      validation: ["one commit per accepted iteration", "scoped files only"]
+    - id: "pull_request"
+      type: "text"
+      destination: "GitHub repository"
+      required: true
+      validation: ["PR created", "PR is not automatically merged"]
+    - id: "final_report"
+      type: "report"
+      destination: "final response"
+      required: true
+      validation: ["includes branch, issues, commits, tests, PR URL, assumptions, limitations"]
+  state_machine:
+    initial: "draft"
+    states:
+      - draft
+      - awaiting_user
+      - ready
+      - running
+      - validating
+      - retrying
+      - rolling_back
+      - degraded
+      - blocked
+      - failed
+      - succeeded
+    terminal:
+      - blocked
+      - failed
+      - succeeded
+    transitions:
+      - from: draft
+        to: awaiting_user
+        when: "required information or capability source is missing"
+      - from: draft
+        to: ready
+        when: "requirements and required capabilities are sufficient"
+      - from: ready
+        to: running
+        when: "execution starts"
+      - from: running
+        to: validating
+        when: "all required execution steps finish"
+      - from: validating
+        to: succeeded
+        when: "all acceptance checks pass"
+      - from: validating
+        to: retrying
+        when: "a recoverable check fails and retry budget remains"
+      - from: retrying
+        to: running
+        when: "repair step is scheduled"
+      - from: running
+        to: rolling_back
+        when: "a failure requires rollback"
+      - from: rolling_back
+        to: failed
+        when: "rollback completes and no retry path remains"
+      - from: running
+        to: degraded
+        when: "optional capability fails and degraded output is acceptable"
+      - from: running
+        to: blocked
+        when: "required external input, permission, or credential is unavailable"
+  steps:
+    - id: "align-requirements"
+      kind: "agent"
+      skill: "skills/build-project/SKILL.md"
+      description: "Collect or infer goal, stack, base branch, validation command, and GitHub capability."
+      depends_on: []
+      parallel_group: null
+      inputs: ["goal", "stack", "base_branch", "validation_command", "github_auth"]
+      outputs: ["requirement"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "initialize-run"
+      kind: "agent"
+      skill: "skills/build-project/hidden/init/SKILL.md"
+      description: "Create feature branch and initialize .build-state.json."
+      depends_on: ["align-requirements"]
+      parallel_group: null
+      inputs: ["requirement"]
+      outputs: ["build_state", "branch", "validation_command"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient git failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "plan-iteration"
+      kind: "agent"
+      skill: "skills/build-project/hidden/spec/SKILL.md"
+      description: "Create the next small GitHub issue and acceptance checks."
+      depends_on: ["initialize-run"]
+      parallel_group: null
+      inputs: ["build_state"]
+      outputs: ["issue_number", "issue_title", "acceptance_checks"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient gh failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "implement-iteration"
+      kind: "agent"
+      skill: "skills/build-project/hidden/code/SKILL.md"
+      description: "Implement the current issue with scoped edits."
+      depends_on: ["plan-iteration"]
+      parallel_group: null
+      inputs: ["issue_number", "acceptance_checks", "build_state"]
+      outputs: ["changed_files", "implementation_summary"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "run-validation"
+      kind: "tool"
+      skill: "skills/build-project/hidden/test/SKILL.md"
+      description: "Run the validation command and record pass/fail evidence."
+      depends_on: ["implement-iteration"]
+      parallel_group: null
+      inputs: ["build_state", "validation_command", "changed_files"]
+      outputs: ["test_status", "test_summary"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient command failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "retry"
+        target_step: "repair-iteration"
+      visibility: "summarized"
+    - id: "validation-gate"
+      kind: "gate"
+      skill: "skills/build-project/hidden/review-gate/SKILL.md"
+      description: "Route pass, fail, or blocked validation outcomes without committing failed work."
+      depends_on: ["run-validation"]
+      parallel_group: null
+      inputs: ["test_status", "test_summary", "build_state"]
+      outputs: ["validation_decision"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "failure-decision"
+      kind: "gate"
+      skill: "skills/build-project/hidden/review-gate/SKILL.md"
+      description: "When validation fails or is blocked, ask whether to repair, redesign, force commit, rollback, or provide missing input."
+      depends_on: ["validation-gate"]
+      parallel_group: null
+      inputs: ["test_status", "test_summary", "issue_number", "build_state"]
+      outputs: ["gate_result"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "commit-iteration"
+      kind: "agent"
+      skill: "skills/build-project/hidden/commit/SKILL.md"
+      description: "Commit one passing or explicitly force-approved iteration."
+      depends_on: ["validation-gate"]
+      parallel_group: null
+      inputs: ["issue_number", "issue_title", "changed_files", "test_status", "build_state"]
+      outputs: ["commit_hash", "build_state"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient git failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "iteration-review"
+      kind: "gate"
+      skill: "skills/build-project/hidden/review-gate/SKILL.md"
+      description: "After a committed passing iteration, ask whether to continue another iteration or finish with a PR."
+      depends_on: ["commit-iteration"]
+      parallel_group: null
+      inputs: ["test_status", "commit_hash", "build_state"]
+      outputs: ["gate_result"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "repair-iteration"
+      kind: "agent"
+      skill: "skills/build-project/hidden/code/SKILL.md"
+      description: "Repair a failed validation within the current issue scope."
+      depends_on: ["failure-decision"]
+      parallel_group: null
+      inputs: ["test_summary", "issue_number", "changed_files", "build_state"]
+      outputs: ["changed_files", "implementation_summary"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 2
+        retry_on: ["recoverable validation failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "rollback"
+        target_step: "rollback-iteration"
+      visibility: "summarized"
+    - id: "rollback-iteration"
+      kind: "agent"
+      skill: "skills/build-project/hidden/rollback/SKILL.md"
+      description: "Rollback current iteration changes when repair or redesign cannot safely continue."
+      depends_on: ["failure-decision"]
+      parallel_group: null
+      inputs: ["build_state", "changed_files", "gate_result"]
+      outputs: ["rollback_status", "rollback_summary"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "create-pr"
+      kind: "agent"
+      skill: "skills/build-project/hidden/merge/SKILL.md"
+      description: "Create the final pull request and stop before merge."
+      depends_on: ["iteration-review"]
+      parallel_group: null
+      inputs: ["build_state", "base_branch"]
+      outputs: ["pull_request", "final_report"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient gh failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "final-synthesis"
+      kind: "synthesis"
+      skill: "skills/build-project/SKILL.md"
+      description: "Summarize branch, issues, commits, tests, PR URL, assumptions, and limitations."
+      depends_on: ["create-pr"]
+      parallel_group: null
+      inputs: ["build_state", "pull_request"]
+      outputs: ["final_report"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "user_visible"
+  gates:
+    - id: "requirement-complete"
+      kind: "requirement"
+      depends_on: ["align-requirements"]
+      pass_when:
+        - "goal is known"
+        - "stack is known or safely inferred"
+        - "validation command is known or safely inferred"
+        - "GitHub issue and PR capability is available"
+      fail_when:
+        - "goal is missing"
+        - "required validation command cannot be inferred"
+        - "GitHub credentials or permissions are unavailable"
+      on_pass: "initialize-run"
+      on_fail: "awaiting_user"
+    - id: "iteration-scope-ready"
+      kind: "validation"
+      depends_on: ["plan-iteration"]
+      pass_when:
+        - "issue has a title"
+        - "issue has testable acceptance checks"
+        - "iteration is small enough for one reviewable commit"
+      fail_when:
+        - "issue is too broad"
+        - "acceptance checks are not testable"
+      on_pass: "implement-iteration"
+      on_fail: "retry_spec"
+    - id: "validation-passed"
+      kind: "validation"
+      depends_on: ["run-validation"]
+      pass_when:
+        - "test_status is pass"
+      fail_when:
+        - "test_status is fail"
+        - "test_status is blocked"
+      on_pass: "commit-iteration"
+      on_fail: "iteration-review"
+    - id: "iteration-decision"
+      kind: "approval"
+      depends_on: ["iteration-review"]
+      pass_when:
+        - "user chooses continue, done, retry_code, retry_spec, force_commit, or rollback"
+      fail_when:
+        - "decision is unavailable"
+      on_pass: "continue to selected target: plan-iteration, create-pr, repair-iteration, plan-iteration after rollback, commit-iteration, or rollback-iteration"
+      on_fail: "awaiting_user"
+    - id: "pr-created"
+      kind: "validation"
+      depends_on: ["create-pr"]
+      pass_when:
+        - "pull request URL is available"
+        - "PR body includes issues, commits, and validation summary"
+        - "PR is not automatically merged"
+      fail_when:
+        - "gh pr create fails after retry"
+      on_pass: "final-synthesis"
+      on_fail: "blocked"
+  failure_policy:
+    default_action: "fail"
+    max_total_attempts: 3
+    rollback_required_for:
+      - "abandoned uncommitted iteration"
+      - "repair attempts exhausted"
+      - "unsafe scope detected after edits"
+    ask_user_for:
+      - "missing goal"
+      - "missing validation command"
+      - "missing GitHub authentication or permissions"
+      - "force commit with failing tests"
+      - "ambiguous rollback affecting unrelated changes"
+      - "external deployment, publishing, paid, or production actions"
+    degraded_output_allowed: false
+  observability:
+    progress_updates: "milestone"
+    audit_log:
+      enabled: true
+      include_hidden_steps: true
+    artifacts:
+      record_intermediate_outputs: true
+      retention: "workflow-local"
+  completion:
+    success_when:
+      - "all accepted iterations are committed"
+      - "validation passed for normal commits or force commits were explicitly approved"
+      - "pull request is created and not automatically merged"
+      - "final report includes branch, issues, commits, tests, PR URL, assumptions, and limitations"
+    failure_when:
+      - "required GitHub, git, goal, stack, or validation capability is unavailable"
+      - "retry budget is exhausted"
+      - "rollback fails or cannot safely distinguish unrelated changes"
+      - "user declines required approval"
+    final_response:
+      include_artifacts: true
+      include_assumptions: true
+      include_limitations: true

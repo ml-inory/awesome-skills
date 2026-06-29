@@ -1,0 +1,575 @@
+workflow:
+  schema_version: "1.0"
+  name: "remote-infer"
+  entry_skill: "skills/remote-infer/SKILL.md"
+  mode: "strict"
+  task_type: "hybrid"
+  visibility: "collapsed_by_default"
+  requirement:
+    goal: "Select an available internal AX board and execute a user-supplied inference, command, transfer, deploy, or mount task with explicit safety gates and auditable results."
+    output:
+      format: "selected board JSON, task execution output, optional inference JSON, validation report, final summary"
+      destination: "final response and any user-specified local output paths"
+      consumer: "both"
+    constraints:
+      time_budget: "bounded by dashboard timeout, SSH/connectivity checks, task timeout, and retry budget"
+      cost_budget: "local network, SSH, and local tooling only unless the user approves external downloads for ax-remote-infer"
+      technology:
+        - "python"
+        - "requests"
+        - "ssh"
+        - "scp"
+        - "sshfs"
+        - "pyaxengine"
+        - "ax_remote_infer daemon"
+      security:
+        - "do not guess credentials"
+        - "do not run destructive or privileged remote operations without explicit approval"
+        - "do not overwrite files or mount over non-empty paths without explicit approval"
+        - "do not expose or deploy services unless explicitly requested"
+        - "record selected board and commands executed"
+      human_approval_required: true
+    acceptance:
+      checks:
+        - "task intent is classified before remote side effects"
+        - "an available AX board matching chip filter is selected"
+        - "required credentials and local paths are available"
+        - "unsafe commands, overwrites, mounts, and deploys have explicit approval"
+        - "task-specific execution succeeds or blocked reason is reported"
+        - "final response includes board info, task class, output, validation status, assumptions, and limitations"
+      metrics:
+        - "dashboard response status"
+        - "board selection result"
+        - "SSH connectivity status"
+        - "daemon port 18500 status for inference"
+        - "remote command exit code"
+        - "transfer or mount verification status"
+        - "inference output JSON availability"
+      required_artifacts:
+        - "selected board JSON"
+        - "task classification"
+        - "execution output or blocked reason"
+        - "validation summary"
+    assumptions:
+      - "The workflow runs on the internal network that can reach the AX dashboard."
+      - "The dashboard endpoint is http://10.126.35.22:25000/api/devices."
+      - "SSH user defaults to root, but credentials must come from SSH config/agent or explicit user approval."
+      - "Remote inference uses port 18500."
+      - "Low-risk task parsing may be inferred from command text and file extensions."
+    open_questions: []
+  capabilities:
+    - id: "classify-task"
+      purpose: "Classify task intent, required inputs, risk, and validation method."
+      source: "generate"
+      skill_path: "skills/remote-infer/hidden/classify-task/SKILL.md"
+      permissions: ["read user request", "inspect local file paths"]
+      required: true
+    - id: "select-board"
+      purpose: "Query the internal dashboard and select an available AX board."
+      source: "existing"
+      skill_path: "skills/remote-infer/hidden/select-board/SKILL.md"
+      permissions: ["network access to dashboard", "execute local python"]
+      required: true
+    - id: "ensure-daemon"
+      purpose: "Install or start ax_remote_infer daemon and verify port 18500."
+      source: "existing"
+      skill_path: "skills/remote-infer/hidden/ensure-daemon/SKILL.md"
+      permissions: ["SSH to board", "download release zip when needed", "execute remote install", "check TCP port"]
+      required: false
+    - id: "run-model"
+      purpose: "Run axmodel inference through pyaxengine RemoteAXExecutionProvider."
+      source: "existing"
+      skill_path: "skills/remote-infer/hidden/run-model/SKILL.md"
+      permissions: ["read local model/input files", "connect to board port 18500", "execute local python"]
+      required: false
+    - id: "execute-ssh"
+      purpose: "Run a remote command or deploy step over SSH."
+      source: "generate"
+      skill_path: "skills/remote-infer/hidden/execute-ssh/SKILL.md"
+      permissions: ["SSH to board", "execute approved remote commands"]
+      required: false
+    - id: "transfer-file"
+      purpose: "Upload or download files between local host and board."
+      source: "generate"
+      skill_path: "skills/remote-infer/hidden/transfer-file/SKILL.md"
+      permissions: ["read local files", "write approved local/remote paths", "SSH/SCP"]
+      required: false
+    - id: "mount-path"
+      purpose: "Mount board paths locally or local paths on the board with explicit safety checks."
+      source: "generate"
+      skill_path: "skills/remote-infer/hidden/mount-path/SKILL.md"
+      permissions: ["sshfs", "SSH to board", "mount approved paths"]
+      required: false
+    - id: "board-client-core"
+      purpose: "Reusable Python implementation for dashboard board selection."
+      source: "existing"
+      skill_path: "core/board_client.py"
+      permissions: ["network access to dashboard", "execute local python"]
+      required: true
+    - id: "infer-core"
+      purpose: "Reusable Python implementation for pyaxengine remote inference."
+      source: "existing"
+      skill_path: "core/infer.py"
+      permissions: ["execute local python", "read model/input files", "connect to board port 18500"]
+      required: false
+    - id: "dashboard-api"
+      purpose: "Internal device inventory and occupancy source."
+      source: "external"
+      skill_path: ""
+      permissions: ["GET http://10.126.35.22:25000/api/devices"]
+      required: true
+    - id: "ssh"
+      purpose: "Remote board command, validation, and daemon installation transport."
+      source: "external"
+      skill_path: ""
+      permissions: ["SSH/SCP/sshfs to selected board"]
+      required: true
+  inputs:
+    - id: "task_description"
+      type: "text"
+      required: true
+      source: "user"
+      validation: ["non-empty", "classifiable or clarified before remote side effects"]
+    - id: "chip"
+      type: "text"
+      required: false
+      source: "user"
+      validation: ["AX650N, AX630C, AX650C, or dashboard chip substring"]
+    - id: "local_paths"
+      type: "file"
+      required: false
+      source: "user"
+      validation: ["required local model/input/upload/mount paths exist"]
+    - id: "remote_paths"
+      type: "text"
+      required: false
+      source: "user"
+      validation: ["required remote paths are explicit before transfer, mount, or deploy"]
+    - id: "ssh_credential"
+      type: "credential"
+      required: false
+      source: "environment"
+      validation: ["SSH config/agent works or user explicitly supplies credential"]
+    - id: "approval"
+      type: "user_decision"
+      required: false
+      source: "user"
+      validation: ["required for destructive commands, overwrites, mounts, deploys, and credential use"]
+  outputs:
+    - id: "selected_board"
+      type: "json"
+      destination: "final response"
+      required: true
+      validation: ["contains ip, hostname, chip_type"]
+    - id: "task_classification"
+      type: "json"
+      destination: "final response"
+      required: true
+      validation: ["contains task_class, risk_level, required_inputs, validation_method"]
+    - id: "execution_result"
+      type: "json"
+      destination: "final response or user-specified local output"
+      required: true
+      validation: ["contains status and task-specific output or blocked reason"]
+    - id: "validation_report"
+      type: "report"
+      destination: "final response"
+      required: true
+      validation: ["includes command exit code, port status, transfer/mount verification, or inference output status"]
+    - id: "final_summary"
+      type: "report"
+      destination: "final response"
+      required: true
+      validation: ["includes board info, task result, assumptions, limitations, and follow-up risks"]
+  state_machine:
+    initial: "draft"
+    states:
+      - draft
+      - awaiting_user
+      - ready
+      - running
+      - validating
+      - retrying
+      - rolling_back
+      - degraded
+      - blocked
+      - failed
+      - succeeded
+    terminal:
+      - blocked
+      - failed
+      - succeeded
+    transitions:
+      - from: draft
+        to: awaiting_user
+        when: "required information or capability source is missing"
+      - from: draft
+        to: ready
+        when: "requirements and required capabilities are sufficient"
+      - from: ready
+        to: running
+        when: "execution starts"
+      - from: running
+        to: validating
+        when: "all required execution steps finish"
+      - from: validating
+        to: succeeded
+        when: "all acceptance checks pass"
+      - from: validating
+        to: retrying
+        when: "a recoverable check fails and retry budget remains"
+      - from: retrying
+        to: running
+        when: "repair step is scheduled"
+      - from: running
+        to: rolling_back
+        when: "a failure requires rollback"
+      - from: rolling_back
+        to: failed
+        when: "rollback completes and no retry path remains"
+      - from: running
+        to: degraded
+        when: "optional capability fails and degraded output is acceptable"
+      - from: running
+        to: blocked
+        when: "required external input, permission, or credential is unavailable"
+  steps:
+    - id: "align-requirements"
+      kind: "agent"
+      skill: "skills/remote-infer/SKILL.md"
+      description: "Collect task description, chip filter, paths, credential source, and approval requirements."
+      depends_on: []
+      parallel_group: null
+      inputs: ["task_description", "chip", "local_paths", "remote_paths", "ssh_credential", "approval"]
+      outputs: ["requirement"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "classify-task"
+      kind: "agent"
+      skill: "skills/remote-infer/hidden/classify-task/SKILL.md"
+      description: "Classify task type, risk level, required inputs, and validation method."
+      depends_on: ["align-requirements"]
+      parallel_group: null
+      inputs: ["task_description", "chip", "local_paths", "remote_paths"]
+      outputs: ["task_classification"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "safety-approval"
+      kind: "gate"
+      skill: "skills/remote-infer/SKILL.md"
+      description: "Require approval for high-risk commands, overwrites, mounts, deploys, or credential use."
+      depends_on: ["classify-task"]
+      parallel_group: null
+      inputs: ["task_classification", "approval"]
+      outputs: ["approval_decision"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "select-board"
+      kind: "agent"
+      skill: "skills/remote-infer/hidden/select-board/SKILL.md"
+      description: "Query the dashboard and select the least-loaded available matching AX board."
+      depends_on: ["safety-approval"]
+      parallel_group: null
+      inputs: ["chip"]
+      outputs: ["selected_board"]
+      timeout_seconds: 10
+      retry:
+        max_attempts: 2
+        retry_on: ["dashboard timeout", "transient network failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "credential-gate"
+      kind: "gate"
+      skill: "skills/remote-infer/SKILL.md"
+      description: "Verify SSH credential source when the selected task path requires board login."
+      depends_on: ["select-board"]
+      parallel_group: null
+      inputs: ["selected_board", "ssh_credential", "task_classification"]
+      outputs: ["credential_status"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "route-task"
+      kind: "gate"
+      skill: "skills/remote-infer/SKILL.md"
+      description: "Select exactly one execution branch from task classification and record skipped branches."
+      depends_on: ["credential-gate"]
+      parallel_group: null
+      inputs: ["task_classification", "credential_status"]
+      outputs: ["selected_route", "skipped_routes"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "ensure-daemon"
+      kind: "agent"
+      skill: "skills/remote-infer/hidden/ensure-daemon/SKILL.md"
+      description: "Conditional branch for axmodel_inference: verify or install ax_remote_infer daemon on port 18500."
+      depends_on: ["route-task"]
+      parallel_group: null
+      inputs: ["selected_board", "ssh_credential"]
+      outputs: ["daemon_status"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["daemon install transient failure", "port check transient failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "run-model"
+      kind: "tool"
+      skill: "skills/remote-infer/hidden/run-model/SKILL.md"
+      description: "Run axmodel inference through pyaxengine and capture JSON outputs."
+      depends_on: ["ensure-daemon"]
+      parallel_group: null
+      inputs: ["selected_board", "local_paths", "daemon_status"]
+      outputs: ["execution_result"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient inference connection failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "execute-ssh"
+      kind: "agent"
+      skill: "skills/remote-infer/hidden/execute-ssh/SKILL.md"
+      description: "Conditional branch for remote_command or deploy: run an approved remote command or deploy step over SSH."
+      depends_on: ["route-task"]
+      parallel_group: null
+      inputs: ["selected_board", "task_classification", "ssh_credential"]
+      outputs: ["execution_result"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient SSH failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "transfer-file"
+      kind: "tool"
+      skill: "skills/remote-infer/hidden/transfer-file/SKILL.md"
+      description: "Conditional branch for upload or download: transfer files using SCP or rsync and verify destination."
+      depends_on: ["route-task"]
+      parallel_group: null
+      inputs: ["selected_board", "task_classification", "local_paths", "remote_paths", "ssh_credential"]
+      outputs: ["execution_result"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient transfer failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "mount-path"
+      kind: "agent"
+      skill: "skills/remote-infer/hidden/mount-path/SKILL.md"
+      description: "Conditional branch for mount tasks: create an approved local or remote mount and verify visibility."
+      depends_on: ["route-task"]
+      parallel_group: null
+      inputs: ["selected_board", "task_classification", "local_paths", "remote_paths", "ssh_credential"]
+      outputs: ["execution_result"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient mount failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "execution-join"
+      kind: "synthesis"
+      skill: "skills/remote-infer/SKILL.md"
+      description: "Join the selected execution branch, record skipped branches, and normalize execution_result."
+      depends_on: ["run-model", "execute-ssh", "transfer-file", "mount-path"]
+      parallel_group: null
+      inputs: ["selected_route", "skipped_routes", "execution_result"]
+      outputs: ["execution_result"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "validate-result"
+      kind: "gate"
+      skill: "skills/remote-infer/SKILL.md"
+      description: "Validate task-specific result from the selected execution path."
+      depends_on: ["execution-join"]
+      parallel_group: null
+      inputs: ["task_classification", "execution_result"]
+      outputs: ["validation_report"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "final-synthesis"
+      kind: "synthesis"
+      skill: "skills/remote-infer/SKILL.md"
+      description: "Summarize selected board, task class, executed path, outputs, validation, assumptions, and limitations."
+      depends_on: ["validate-result"]
+      parallel_group: null
+      inputs: ["selected_board", "task_classification", "execution_result", "validation_report"]
+      outputs: ["final_summary"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "user_visible"
+  gates:
+    - id: "requirement-complete"
+      kind: "requirement"
+      depends_on: ["align-requirements"]
+      pass_when:
+        - "task description is known"
+        - "required paths are known or can be inferred"
+        - "credential source is available or not needed yet"
+      fail_when:
+        - "task cannot be classified"
+        - "required file path is missing"
+        - "credential is needed and unavailable"
+      on_pass: "classify-task"
+      on_fail: "awaiting_user"
+    - id: "safety-approved"
+      kind: "approval"
+      depends_on: ["classify-task"]
+      pass_when:
+        - "risk level is low"
+        - "or user explicitly approves medium/high-risk operation"
+      fail_when:
+        - "unsafe destructive operation is requested without approval"
+        - "mount, overwrite, deploy, or credential use lacks approval"
+      on_pass: "select-board"
+      on_fail: "blocked"
+    - id: "board-available"
+      kind: "capability"
+      depends_on: ["select-board"]
+      pass_when:
+        - "dashboard returns at least one free matching AX board"
+      fail_when:
+        - "dashboard unavailable after retry"
+        - "no available board matches chip filter"
+      on_pass: "credential-gate"
+      on_fail: "blocked"
+    - id: "execution-route"
+      kind: "synthesis"
+      depends_on: ["credential-gate"]
+      pass_when:
+        - "axmodel_inference routes to ensure-daemon then run-model"
+        - "remote_command or deploy routes to execute-ssh"
+        - "upload or download routes to transfer-file"
+        - "mount task routes to mount-path"
+      fail_when:
+        - "task class is unknown"
+      on_pass: "selected route"
+      on_fail: "awaiting_user"
+    - id: "result-valid"
+      kind: "validation"
+      depends_on: ["validate-result"]
+      pass_when:
+        - "inference returns JSON outputs"
+        - "or remote command exit code is zero and validation passes"
+        - "or transfer destination exists"
+        - "or mount point is visible"
+      fail_when:
+        - "task-specific validation fails"
+        - "execution output is missing or malformed"
+      on_pass: "final-synthesis"
+      on_fail: "failed"
+  failure_policy:
+    default_action: "fail"
+    max_total_attempts: 3
+    rollback_required_for:
+      - "partially created mount when unmount command is known and safe"
+      - "partial file transfer when destination was created by this workflow and safe to remove"
+      - "failed deploy when an explicit rollback command was supplied by the user"
+    ask_user_for:
+      - "missing SSH credential"
+      - "destructive remote command"
+      - "file overwrite"
+      - "filesystem mount"
+      - "service deployment or long-running process"
+      - "external download of ax-remote-infer release"
+      - "unknown task intent"
+    degraded_output_allowed: false
+  observability:
+    progress_updates: "milestone"
+    audit_log:
+      enabled: true
+      include_hidden_steps: true
+    artifacts:
+      record_intermediate_outputs: true
+      retention: "workflow-local"
+  completion:
+    success_when:
+      - "task classification is recorded"
+      - "selected board is recorded"
+      - "chosen execution path completes"
+      - "task-specific validation passes"
+      - "final response includes output, assumptions, and limitations"
+    failure_when:
+      - "dashboard is unavailable or no matching board is free"
+      - "required credential, file, dependency, or approval is unavailable"
+      - "task is unsafe or ambiguous and cannot be clarified"
+      - "retry budget is exhausted"
+      - "task-specific validation fails"
+    final_response:
+      include_artifacts: true
+      include_assumptions: true
+      include_limitations: true

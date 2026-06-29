@@ -1,67 +1,68 @@
 ---
 name: build-project
-description: 小步迭代地把开发目标拆成需求设计、编码、测试、提交、评审和合并循环，适用于用户要求开始开发、build 或提出新的开发目标时
+description: 小步迭代地把开发目标拆成初始化、需求切片、编码、测试、提交、评审和 PR 交付循环，适用于用户要求开始开发、build 或提出新的开发目标时
 ---
 
 # build-project
 
-小步迭代的需求→编码→测试→提交循环，直到目标达成。
+小步迭代的需求切片 -> 编码 -> 测试 -> 提交 -> 评审循环，直到目标达成并创建 PR。
 
-## 重要：自主执行规则
-**不得在步骤之间停下来等待用户确认。** 每完成一步，立即执行下一步。唯一可以暂停的情况：
-- Step 0 中确实缺少 `GOAL` 或无法自动检测技术栈
-- 编码过程中发现需求模糊无法继续
-- Step 5 评审门控判断为 `done`
+## Workflow Contract
 
-## 触发条件
-用户说"开始开发"、"build"、`$build-project`、`/build-project` 或提出一个新的开发目标。
+Use [workflows/build-project.yaml](../../workflows/build-project.yaml) as the durable protocol for state, gates, retries, rollback, observability, and completion. Treat the YAML as authoritative when step ordering or failure handling is unclear.
 
-## 入口参数
-从用户消息中提取（可选，未提供时主动询问）：
-- `GOAL`：本次开发的总目标（一句话描述）
-- `STACK`：技术栈（如 python/node/go，若能从项目文件自动检测则无需询问）
+## Trigger Conditions
 
-## 执行步骤
+Use this skill when the user says "开始开发", "build", `$build-project`, `/build-project`, or gives a new development goal that should be implemented in small, reviewable iterations.
 
-### Step 0 — 初始化
-1. 若 `GOAL` 未提供，询问用户："本次开发的目标是什么？"
-2. 检测技术栈：按优先级查找 `pyproject.toml` / `package.json` / `go.mod` / `Makefile`；若无则询问。
-3. 创建 feature 分支：
-   ```
-   git checkout -b feat/build-$(date +%Y%m%d-%H%M)
-   ```
-4. 记录迭代计数器 `N=1`，保存到 `.build-state.json`：
-   ```json
-   {"goal": "<GOAL>", "stack": "<STACK>", "branch": "<branch>", "iteration": 1, "issues": []}
-   ```
-5. **完成后立即执行 Step 1，不要停。**
+## Required Inputs
 
-### Step 1 — 需求设计
-读取 `hidden/spec.md`，按其中全部步骤执行，传入当前迭代目标和 N。
-**完成后立即执行 Step 2，不要停。**
+Collect or infer these fields before starting side effects:
 
-### Step 2 — 编码
-读取 `hidden/code.md`，按其中全部步骤执行，传入 ISSUE_NUMBER 和 STACK。
-**完成后立即执行 Step 3，不要停。**
+- `goal`: the overall development goal.
+- `stack`: primary language or build ecosystem. Infer from `pyproject.toml`, `package.json`, `go.mod`, or `Makefile` when safe.
+- `base_branch`: target branch for the PR, defaulting to the repository default branch or `main`.
+- `validation_command`: test command, inferred from repository metadata when safe.
 
-### Step 3 — 测试
-读取 `hidden/test.md`，按其中全部步骤执行。
-**完成后立即执行 Step 4，不要停。**
+Ask the user only when a missing field materially affects correctness, safety, credentials, external side effects, or destructive operations. Record low-risk assumptions in `.build-state.json` and the final response.
 
-### Step 4 — 提交
-读取 `hidden/commit.md`，按其中全部步骤执行，传入 ISSUE_NUMBER 和 N。
-**完成后立即执行 Step 5，不要停。**
+## Hard Constraints
 
-### Step 5 — 评审门控
-读取 `hidden/review-gate.md`，按其中全部步骤执行。
-- 结果为 `continue` → N += 1，更新 `.build-state.json`，**立即回到 Step 1**
-- 结果为 `done` → 执行 Step 6
+- Preserve unrelated user changes in the worktree.
+- Keep each iteration small enough for a single reviewable commit.
+- Do not run deployment, publishing, paid, or production operations.
+- Do not force-commit failed tests unless the user explicitly chooses that path at the review gate.
+- Do not automatically merge the PR.
+- Do not guess missing GitHub credentials, repository permissions, or private service access.
 
-### Step 6 — 合并
-读取 `hidden/merge.md`，按其中全部步骤执行。
+## Execution
 
-## 工作留痕
-每次迭代结束后，在 `.build-state.json` 中追加本轮摘要：
-```json
-{"iteration": N, "issue": "#XX", "commit": "<hash>", "test_status": "pass|fail", "summary": "..."}
-```
+1. Run `hidden/init` to validate prerequisites, create a feature branch, and initialize `.build-state.json`.
+2. For each iteration:
+   - Run `hidden/spec` to create or record one small issue with acceptance checks.
+   - Run `hidden/code` to implement the minimum scoped change.
+   - Run `hidden/test` to execute the inferred or supplied validation command.
+   - Run `hidden/commit` only when tests pass or the user explicitly approves a force commit.
+   - Run `hidden/review-gate` to decide whether to continue, repair, redesign the iteration, force commit, or finish.
+3. When the review gate returns `done`, run `hidden/merge` to create a PR and stop before merging.
+4. If an iteration must be abandoned, run `hidden/rollback` to remove only that iteration's uncommitted or explicitly tracked changes while preserving unrelated work.
+
+## Progress Reporting
+
+Keep user-facing updates concise:
+
+- Initialization result, branch name, and detected stack.
+- Current iteration number, issue title, and acceptance checks.
+- Files changed and implementation summary.
+- Test command and pass/fail status.
+- Commit hash, review-gate decision, and PR URL.
+
+## Completion
+
+Finish only when one of these conditions is true:
+
+- A PR is created and all retained commits are represented in `.build-state.json`.
+- The workflow is blocked by missing goal, stack, test command, GitHub access, repository permission, or unsafe scope.
+- The retry budget is exhausted and rollback has completed or requires user intervention.
+
+Return a summary with the branch, issues, commits, validation status, PR URL when available, assumptions, and remaining risks.

@@ -7,6 +7,10 @@ description: 当目标 AX 板 TCP 18500 不通时下载、安装并启动 ax_rem
 
 当 TCP 18500 不通时，在目标板子上安装并启动 ax_remote_infer daemon。
 
+## Workflow Role
+
+This helper satisfies the `ensure-daemon` step in `workflows/remote-infer.yaml`. It is required only for `axmodel_inference` tasks.
+
 ## 前提
 
 - 已下载 ax-remote-infer release zip（从 https://github.com/AXERA-TECH/ax-remote-infer/releases/latest）
@@ -45,5 +49,5 @@ python -c "import socket,sys; s=socket.socket(); s.settimeout(5); r=s.connect_ex
 
 ## 注意
 
-- 默认 SSH 用户 `root`，密码 `123456`（或询问用户）
+- 默认 SSH 用户 `root`。只使用已有 SSH key/config 或用户明确批准的密码。
 - 需要本机安装 `sshpass`（`apt install sshpass`）或使用 SSH key

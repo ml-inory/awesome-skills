@@ -1,15 +1,21 @@
 ---
 name: remote-infer
-description: 在内网找空闲 AX 板子，在上面执行任意任务
+description: 在内网找空闲 AX 板子，通过可审计的选板、连通性、任务分类、远程执行和验证流程完成推理、命令、传输或挂载任务
 ---
 
 # remote-infer
 
-TRIGGER when: user mentions 板子, 找板子, 上板子, 跑一下, remote board, AX board, or wants to do anything on a board (deploy, run, mount, infer, ssh, etc.).
+Find an available AX board on the internal dashboard and run the user's board task through an auditable workflow.
 
-在内网找一块空闲 AX 板子，通过 SSH 执行用户指定的任务。
+## Workflow Contract
 
-## 用法
+Use [workflows/remote-infer.yaml](../../workflows/remote-infer.yaml) as the durable protocol for state, gates, retries, failure handling, observability, and completion. Treat the YAML as authoritative when step ordering or failure handling is unclear.
+
+## Trigger Conditions
+
+Use this skill when the user mentions 板子, 找板子, 上板子, 跑一下, remote board, AX board, deploy on board, infer, ssh, scp, mount, or wants to run a task on an AX board.
+
+## Usage
 
 ```
 $remote-infer [--chip AX650N|AX630C|AX650C] <任务描述>
@@ -21,40 +27,51 @@ $remote-infer [--chip AX650N|AX630C|AX650C] <任务描述>
 - 挂载本地目录：`$remote-infer mount /local/path`
 - 执行任意命令：`$remote-infer 执行 echo hello`
 
-## 执行步骤
+## Required Inputs
 
-### Step 1 — 选板
+Collect or infer these fields before remote side effects:
 
-```bash
-python3 -c "
-import json, sys, requests
-devices = requests.get('http://10.126.35.22:25000/api/devices', timeout=5).json()['devices']
-candidates = [d for d in devices if d['is_ax'] and not d['is_occupied']]
-if not candidates:
-    print('ERROR: no available AX board', file=sys.stderr); sys.exit(1)
-candidates.sort(key=lambda d: d.get('cmm_used_percent') or 100)
-d = candidates[0]
-print(json.dumps({'ip': d['ip'], 'hostname': d['hostname'], 'chip_type': d['chip_type']}))
-"
-```
+- `task_description`: command, model path, transfer, mount, deploy, or other board task.
+- `chip`: optional chip filter such as `AX650N`, `AX630C`, or `AX650C`.
+- `auth`: SSH key or approved password path. Use existing SSH config when available.
+- `local_paths`: required for model, input, upload, or mount tasks.
+- `remote_paths`: required for upload, download, mount, deploy, or command tasks when not inferable.
 
-输出 JSON：`{"ip": "...", "hostname": "...", "chip_type": "..."}`
-若无可用板子，打印错误并中止。
+Ask the user only when the missing value affects safety, credentials, destructive remote operations, filesystem mounts, or task correctness.
 
-### Step 2 — 执行任务
+## Hard Constraints
 
-根据用户意图选择方式：
+- Do not guess credentials beyond existing SSH agent/config or an explicitly approved credential.
+- Do not run destructive remote commands, format disks, kill unrelated services, overwrite files, or mount over non-empty paths without explicit user approval.
+- Do not deploy, expose network services, or change long-running board state unless the task explicitly requires it.
+- Prefer least-risk execution: inspect paths and connectivity before mutation.
+- Record selected board IP, chip, hostname, task class, commands run, and validation result.
 
-| 场景 | 做法 |
-|------|------|
-| 跑 axmodel 推理 | 先 [ensure-daemon](hidden/ensure-daemon/SKILL.md)，再 [run-model](hidden/run-model/SKILL.md) |
-| 部署服务 / 执行命令 | `ssh root@<IP> '<command>'` |
-| 上传文件 | `scp <local> root@<IP>:<remote>` |
-| 挂载本地目录到板子 | `ssh root@<IP> 'mount -t nfs ...'` 或按需选方案 |
-| 挂载板子目录到本地 | `sshfs root@<IP>:<remote> <local_mountpoint>` |
+## Execution
 
-默认 SSH 凭据：用户 `root`，密码 `123456`（或 SSH key）。
+1. Run `hidden/classify-task` to identify the task class and required inputs.
+2. Run `hidden/select-board` to choose an available AX board, optionally filtered by chip.
+3. Run the task path:
+   - `axmodel_inference`: run `hidden/ensure-daemon`, then `hidden/run-model`.
+   - `remote_command` or `deploy`: run `hidden/execute-ssh`.
+   - `upload` or `download`: run `hidden/transfer-file`.
+   - `mount_local_to_board` or `mount_board_to_local`: run `hidden/mount-path`.
+4. Validate the task-specific result and report board information plus command/model output.
 
-## 输出
+## Progress Reporting
 
-展示选中的板子（IP、芯片型号、主机名）+ 任务执行结果。
+Keep user-facing updates concise:
+
+- Task class and required inputs.
+- Selected board IP, chip, and hostname.
+- Connectivity or daemon status.
+- Remote command, transfer, mount, or inference status.
+- Final output, artifacts, assumptions, and limitations.
+
+## Completion
+
+Finish only when one of these conditions is true:
+
+- The requested task completes and task-specific validation passes.
+- The workflow is blocked by no available board, missing credentials, missing files, unsafe command, unavailable dashboard, or unavailable dependencies.
+- A recoverable failure exhausts the retry budget and any partial remote side effects are reported.
