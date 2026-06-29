@@ -1,0 +1,457 @@
+workflow:
+  schema_version: "1.0"
+  name: "refactor"
+  entry_skill: "skills/refactor/SKILL.md"
+  mode: "guided"
+  task_type: "iterative"
+  visibility: "collapsed_by_default"
+  requirement:
+    goal: "Safely improve a codebase for speed, size, or both through incremental, measurable, rollbackable refactoring."
+    output:
+      format: "modified code, added tests, JSON audit artifacts, final report"
+      destination: "target repository and storage/workflows/<run_id>/"
+      consumer: "both"
+    constraints:
+      time_budget: "bounded by max_rounds and discovered validation command runtime"
+      cost_budget: "local tooling only unless user approves external services"
+      technology:
+        - "python"
+        - "cpp"
+        - "cuda"
+        - "rust"
+        - "typescript"
+        - "javascript"
+        - "go"
+        - "java"
+      security:
+        - "do not use private credentials unless explicitly supplied"
+        - "do not deploy or publish"
+        - "preserve unrelated worktree changes"
+      human_approval_required: false
+    acceptance:
+      checks:
+        - "baseline tests pass before refactoring"
+        - "each accepted round passes full tests"
+        - "no new lint or type errors"
+        - "target speed or size metric improves for accepted rounds"
+        - "existing tests are not modified"
+      metrics:
+        - "test pass count"
+        - "lint/type error deltas"
+        - "benchmark or runtime proxy"
+        - "binary, bundle, dependency, or source-size metric"
+      required_artifacts:
+        - "baseline.json"
+        - "opportunities.json"
+        - "execution_queue.json"
+        - "round changes.json"
+        - "round new_tests.json"
+        - "round validation.json"
+        - "rollback.json for failed rounds"
+    assumptions:
+      - "The workflow runs inside a git worktree."
+      - "Validation commands can be inferred from repository metadata when the user does not supply them."
+      - "Low-risk missing details may be inferred and recorded."
+    open_questions: []
+  capabilities:
+    - id: "baseline"
+      purpose: "Capture tests, lint/type checks, benchmark, and size ground truth."
+      source: "existing"
+      skill_path: "skills/refactor/hidden/baseline/SKILL.md"
+      permissions: ["read repository", "execute local validation commands", "write audit artifacts"]
+      required: true
+    - id: "scanner"
+      purpose: "Identify optimization opportunities in read-only mode."
+      source: "existing"
+      skill_path: "skills/refactor/hidden/scanner/SKILL.md"
+      permissions: ["read repository", "write audit artifacts"]
+      required: true
+    - id: "ranker"
+      purpose: "Create a dependency-aware execution queue."
+      source: "existing"
+      skill_path: "skills/refactor/hidden/ranker/SKILL.md"
+      permissions: ["read audit artifacts", "write audit artifacts"]
+      required: true
+    - id: "refactor-one"
+      purpose: "Apply one minimal API-compatible change."
+      source: "existing"
+      skill_path: "skills/refactor/hidden/refactor-one/SKILL.md"
+      permissions: ["read repository", "edit scoped files", "create git branch", "write audit artifacts"]
+      required: true
+    - id: "test-augment"
+      purpose: "Add isolated tests without editing existing tests."
+      source: "existing"
+      skill_path: "skills/refactor/hidden/test-augment/SKILL.md"
+      permissions: ["read repository", "add test files", "execute local test command", "write audit artifacts"]
+      required: true
+    - id: "validator"
+      purpose: "Gate each round with tests, lint/type checks, metric comparison, and API compatibility."
+      source: "existing"
+      skill_path: "skills/refactor/hidden/validator/SKILL.md"
+      permissions: ["execute local validation commands", "read audit artifacts", "write audit artifacts"]
+      required: true
+    - id: "rollback"
+      purpose: "Revert only the failed round while preserving unrelated user changes."
+      source: "existing"
+      skill_path: "skills/refactor/hidden/rollback/SKILL.md"
+      permissions: ["inspect git status", "revert scoped changes", "delete safe round branch", "write audit artifacts"]
+      required: true
+    - id: "git"
+      purpose: "Track branches, diffs, and rollback boundaries."
+      source: "external"
+      skill_path: ""
+      permissions: ["local git commands"]
+      required: true
+  inputs:
+    - id: "optimization_target"
+      type: "text"
+      required: true
+      source: "user"
+      validation: ["one of speed, size, speed+size"]
+    - id: "tech_stack"
+      type: "text"
+      required: true
+      source: "user"
+      validation: ["supported or inferable language/build ecosystem"]
+    - id: "scope"
+      type: "directory"
+      required: false
+      source: "user"
+      validation: ["path exists", "path is inside repository"]
+    - id: "max_rounds"
+      type: "text"
+      required: false
+      source: "user"
+      validation: ["positive integer"]
+    - id: "user_commands"
+      type: "text"
+      required: false
+      source: "user"
+      validation: ["commands are local and non-destructive"]
+  outputs:
+    - id: "modified_code"
+      type: "code"
+      destination: "target repository"
+      required: false
+      validation: ["only accepted rounds remain"]
+    - id: "added_tests"
+      type: "code"
+      destination: "target repository"
+      required: false
+      validation: ["new test files only"]
+    - id: "audit_artifacts"
+      type: "json"
+      destination: "storage/workflows/<run_id>/"
+      required: true
+      validation: ["valid JSON", "all completed steps recorded"]
+    - id: "final_report"
+      type: "report"
+      destination: "final response"
+      required: true
+      validation: ["includes applied, skipped, rolled back, metrics, assumptions, limitations"]
+  state_machine:
+    initial: "draft"
+    states:
+      - draft
+      - awaiting_user
+      - ready
+      - running
+      - validating
+      - retrying
+      - rolling_back
+      - degraded
+      - blocked
+      - failed
+      - succeeded
+    terminal:
+      - blocked
+      - failed
+      - succeeded
+    transitions:
+      - from: draft
+        to: awaiting_user
+        when: "required information or capability source is missing"
+      - from: draft
+        to: ready
+        when: "requirements and required capabilities are sufficient"
+      - from: ready
+        to: running
+        when: "execution starts"
+      - from: running
+        to: validating
+        when: "all required execution steps finish"
+      - from: validating
+        to: succeeded
+        when: "all acceptance checks pass"
+      - from: validating
+        to: retrying
+        when: "a recoverable check fails and retry budget remains"
+      - from: retrying
+        to: running
+        when: "repair step is scheduled"
+      - from: running
+        to: rolling_back
+        when: "a failure requires rollback"
+      - from: rolling_back
+        to: failed
+        when: "rollback completes and no retry path remains"
+      - from: running
+        to: degraded
+        when: "optional capability fails and degraded output is acceptable"
+      - from: running
+        to: blocked
+        when: "required external input, permission, or credential is unavailable"
+  steps:
+    - id: "align-requirements"
+      kind: "agent"
+      skill: "skills/refactor/SKILL.md"
+      description: "Collect or infer optimization target, tech stack, scope, max rounds, and validation commands."
+      depends_on: []
+      parallel_group: null
+      inputs: ["optimization_target", "tech_stack", "scope", "max_rounds", "user_commands"]
+      outputs: ["requirement"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+    - id: "capture-baseline"
+      kind: "agent"
+      skill: "skills/refactor/hidden/baseline/SKILL.md"
+      description: "Run baseline checks and metrics before code changes."
+      depends_on: ["align-requirements"]
+      parallel_group: null
+      inputs: ["requirement"]
+      outputs: ["baseline.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["transient command failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "scan-opportunities"
+      kind: "agent"
+      skill: "skills/refactor/hidden/scanner/SKILL.md"
+      description: "Read-only opportunity scan using baseline evidence."
+      depends_on: ["capture-baseline"]
+      parallel_group: null
+      inputs: ["baseline.json", "requirement"]
+      outputs: ["opportunities.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "rank-opportunities"
+      kind: "agent"
+      skill: "skills/refactor/hidden/ranker/SKILL.md"
+      description: "Rank opportunities by ROI, risk, confidence, and dependency order."
+      depends_on: ["scan-opportunities"]
+      parallel_group: null
+      inputs: ["opportunities.json", "requirement"]
+      outputs: ["execution_queue.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+    - id: "round-refactor"
+      kind: "agent"
+      skill: "skills/refactor/hidden/refactor-one/SKILL.md"
+      description: "Apply one queued opportunity with a minimal API-compatible diff."
+      depends_on: ["rank-opportunities"]
+      parallel_group: null
+      inputs: ["execution_queue.json", "baseline.json", "requirement"]
+      outputs: ["changes.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "round-test-augment"
+      kind: "agent"
+      skill: "skills/refactor/hidden/test-augment/SKILL.md"
+      description: "Add tests for the round without editing existing test files."
+      depends_on: ["round-refactor"]
+      parallel_group: null
+      inputs: ["changes.json", "requirement"]
+      outputs: ["new_tests.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["new test needs repair"]
+        backoff: "fixed"
+      on_failure:
+        action: "retry"
+        target_step: "round-refactor"
+      visibility: "summarized"
+    - id: "round-validate"
+      kind: "gate"
+      skill: "skills/refactor/hidden/validator/SKILL.md"
+      description: "Validate tests, lint/type checks, target metric, and API compatibility."
+      depends_on: ["round-test-augment"]
+      parallel_group: null
+      inputs: ["baseline.json", "changes.json", "new_tests.json", "requirement"]
+      outputs: ["validation.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["inconclusive metric", "transient command failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "retry"
+        target_step: "round-repair"
+      visibility: "summarized"
+    - id: "round-repair"
+      kind: "agent"
+      skill: "skills/refactor/hidden/refactor-one/SKILL.md"
+      description: "Repair a recoverable validation failure once while preserving the original opportunity scope."
+      depends_on: ["round-validate"]
+      parallel_group: null
+      inputs: ["validation.json", "changes.json", "new_tests.json", "requirement"]
+      outputs: ["changes.json", "new_tests.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 1
+        retry_on: ["recoverable validation failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "rollback"
+        target_step: "round-rollback"
+      visibility: "summarized"
+    - id: "round-rollback"
+      kind: "agent"
+      skill: "skills/refactor/hidden/rollback/SKILL.md"
+      description: "Revert failed round changes and record failure."
+      depends_on: ["round-repair"]
+      parallel_group: null
+      inputs: ["validation.json", "changes.json", "requirement"]
+      outputs: ["rollback.json"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+    - id: "final-synthesis"
+      kind: "synthesis"
+      skill: "skills/refactor/SKILL.md"
+      description: "Summarize accepted, skipped, blocked, and rolled-back rounds with metrics and risks."
+      depends_on: ["round-validate"]
+      parallel_group: null
+      inputs: ["baseline.json", "execution_queue.json", "validation.json"]
+      outputs: ["final_report"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "user_visible"
+  gates:
+    - id: "requirement-complete"
+      kind: "requirement"
+      depends_on: ["align-requirements"]
+      pass_when:
+        - "optimization target is known"
+        - "tech stack is known or safely inferred"
+        - "scope is known and exists"
+      fail_when:
+        - "required information affects safety or correctness and is missing"
+      on_pass: "capture-baseline"
+      on_fail: "awaiting_user"
+    - id: "baseline-clean"
+      kind: "validation"
+      depends_on: ["capture-baseline"]
+      pass_when:
+        - "existing tests pass"
+        - "required configured checks can run or unavailable checks are recorded"
+      fail_when:
+        - "baseline tests fail"
+        - "required validation command is missing and cannot be inferred"
+      on_pass: "scan-opportunities"
+      on_fail: "blocked"
+    - id: "queue-available"
+      kind: "synthesis"
+      depends_on: ["rank-opportunities"]
+      pass_when:
+        - "at least one viable opportunity exists"
+      fail_when:
+        - "no viable opportunities remain"
+      on_pass: "round-refactor"
+      on_fail: "succeeded"
+    - id: "round-accepted"
+      kind: "validation"
+      depends_on: ["round-validate"]
+      pass_when:
+        - "full test suite passes"
+        - "no new lint/type errors"
+        - "target metric improves or accepted validation proxy passes"
+        - "API compatibility holds"
+      fail_when:
+        - "any required validation gate fails"
+        - "metric is inconclusive after retry"
+      on_pass: "next queued opportunity or final-synthesis"
+      on_fail: "round-rollback"
+  failure_policy:
+    default_action: "fail"
+    max_total_attempts: 3
+    rollback_required_for:
+      - "test regression"
+      - "metric regression"
+      - "new lint or type errors"
+      - "API incompatibility"
+      - "inconclusive validation after retry"
+    ask_user_for:
+      - "public API change"
+      - "destructive git cleanup"
+      - "missing credentials"
+      - "production or deployment side effects"
+      - "baseline failures"
+    degraded_output_allowed: false
+  observability:
+    progress_updates: "milestone"
+    audit_log:
+      enabled: true
+      include_hidden_steps: true
+    artifacts:
+      record_intermediate_outputs: true
+      retention: "workflow-local"
+  completion:
+    success_when:
+      - "all accepted rounds pass validation"
+      - "final report includes measured improvement and residual risks"
+      - "no existing tests were modified"
+    failure_when:
+      - "baseline is broken"
+      - "rollback fails"
+      - "retry budget is exhausted"
+      - "required user input, permission, or credential is unavailable"
+    final_response:
+      include_artifacts: true
+      include_assumptions: true
+      include_limitations: true

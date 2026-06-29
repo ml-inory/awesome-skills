@@ -1,70 +1,63 @@
 ---
 name: baseline
-description: 在重构开始前捕获代码库基线状态，运行现有测试、lint、type check、benchmark 和体积度量作为后续对比依据
+description: Capture the pre-refactor ground truth by detecting and running existing tests, lint, type checks, benchmarks, and size metrics before any code changes are made.
 ---
 
-# Baseline Snapshot（隐藏 Skill）
+# Baseline
 
-## 职责
-在重构开始前，捕获代码库的当前状态作为基线。
-此基线是后续所有轮次对比的**唯一真相源**。
+Create the single source of truth for later validation. Stop the workflow if the project is already failing required checks.
 
-## 输入
-| 输入 | 来源 | 说明 |
-|------|------|------|
-| `tech_stack` | Entry skill | 决定使用哪些 test/lint/bench 工具 |
-| `scope` | Entry skill | 分析范围 |
-| `optimization_target` | Entry skill | 需要 benchmark 的维度（speed/size） |
+## Inputs
 
-## 执行步骤
+- `run_id`
+- `optimization_target`: `speed`, `size`, or `speed+size`
+- `tech_stack`
+- `scope`
+- `user_commands`: optional test, lint, type, benchmark, or build commands supplied by the user
 
-### 1. 发现并运行现有测试
-根据 `tech_stack` 检测并执行测试套件：
+## Procedure
 
-| 技术栈 | 测试命令 | 检测依据 |
-|--------|---------|---------|
-| python | `pytest --tb=short -q` | `pytest.ini`, `pyproject.toml` |
-| cpp/cuda | `ctest --output-on-failure` 或 `make test` | `CMakeLists.txt` |
-| rust | `cargo test` | `Cargo.toml` |
-| typescript | `npm test` 或 `npx jest` | `package.json` |
+1. Inspect repository metadata to discover commands:
+   - Python: `pytest`, `ruff`, `flake8`, `mypy`, `pyright`, `pyproject.toml`
+   - C/C++/CUDA: `cmake`, `ctest`, `make test`, `ninja test`, `clang-tidy`
+   - Rust: `cargo test`, `cargo clippy`, `cargo bench`
+   - TypeScript/JavaScript: `package.json` scripts, `npm test`, `eslint`, `tsc`
+   - Go: `go test ./...`, `go test -bench`, `go vet`
+   - Java: Maven or Gradle test/check tasks
+2. Prefer user-provided commands over inferred commands.
+3. Run required baseline checks:
+   - Existing tests
+   - Lint and type checks when configured
+   - Benchmarks when `optimization_target` includes `speed`
+   - Size metrics when `optimization_target` includes `size`
+4. Record raw command, exit code, duration, and summarized output for each check.
+5. If any required existing test fails, return `blocked` and do not proceed.
 
-**记录**：测试总数、通过/失败数、完整输出日志。
+## Size Metrics
 
-**关键**：若基线测试有任何失败，立即停止并报告用户，不在破损基线上继续。
+Choose the most relevant available metric:
 
-### 2. 运行 Lint / Type Check
-| 技术栈 | Lint 命令 |
-|--------|----------|
-| python | `ruff check .` 或 `flake8`；`mypy .` 或 `pyright` |
-| cpp | `clang-tidy` |
-| rust | `cargo clippy` |
-| typescript | `npx eslint .`；`npx tsc --noEmit` |
+- Binary or artifact size after the normal build
+- Bundle size for web projects
+- Source lines or byte count for code-size refactors
+- Dependency footprint when the opportunity concerns dependency removal
 
-**记录**：当前 warning/error 数量作为基线。
+## Output
 
-### 3. 运行 Benchmark（若目标含 speed）
-- 查找已有 benchmark 文件（`bench_*.py`、`*_benchmark.cpp`、`benches/` 等）
-- 若无 benchmark，以测试套件执行时间作为代理指标
-- 尽可能按模块/函数记录耗时
-
-### 4. 度量体积（若目标含 size）
-- 二进制大小：度量编译产物
-- 代码行数：使用 `tokei` 或 `cloc`
-- Bundle 大小：对 JS/TS 度量打包产物
-
-## 输出
-保存基线快照至 `storage/workflows/<run_id>/baseline.json`：
+Write `storage/workflows/<run_id>/baseline.json`:
 
 ```json
 {
-  "run_id": "refactor-20250625-001",
-  "timestamp": "2025-06-25T10:00:00Z",
-  "tests": { "total": 130, "passed": 130, "failed": 0 },
-  "lint": { "errors": 0, "warnings": 12 },
-  "benchmark": {
-    "total_time_ms": 4500,
-    "per_module": { "module_a.process": 340, "module_b.parse": 89 }
-  },
-  "size": { "binary_bytes": null, "loc": 8500 }
+  "run_id": "refactor-YYYYMMDD-HHMMSS",
+  "scope": "src",
+  "commands": [],
+  "tests": { "passed": true, "total": null, "failed": 0 },
+  "lint": { "passed": true, "errors": 0, "warnings": 0 },
+  "types": { "passed": true, "errors": 0 },
+  "benchmark": { "available": false, "metrics": [] },
+  "size": { "available": false, "metrics": [] },
+  "blocked_reason": null
 }
 ```
+
+Return the baseline path, detected commands, and any checks that were unavailable.

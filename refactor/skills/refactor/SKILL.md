@@ -1,57 +1,65 @@
 ---
 name: refactor
-description: 稳步重构遗留代码，向指定目标（速度/体积）优化
+description: Safely refactor legacy or performance-sensitive codebases toward speed, size, or speed+size goals through an auditable baseline, scan, rank, one-change-at-a-time implementation, test augmentation, validation, and rollback workflow. Use when Codex is asked to improve runtime performance, reduce code or binary size, remove dead or duplicate code, simplify legacy code, or run an incremental refactoring campaign with measurable acceptance checks.
 ---
 
-# Refactor - 入口 Skill
+# Refactor
 
-## 触发方式
-用户调用 `$refactor`（Codex）或 `/refactor`（Claude Code）。
+Run a conservative, measurable refactoring workflow. Optimize only toward the user's stated target and keep each round small enough to validate and roll back independently.
 
-## 行为
+## Workflow Contract
 
-这是用户**唯一可见的入口**。调用后：
+Use [workflows/refactor.yaml](../../workflows/refactor.yaml) as the durable protocol for state, gates, retries, rollback, and completion. Treat the YAML as authoritative when step ordering or failure handling is unclear.
 
-1. **询问用户**以下配置（使用 AskUserQuestion 工具），用户在命令参数中已提供的项可跳过：
+## Required Inputs
 
-| 配置项 | 说明 | 选项 |
-|--------|------|------|
-| 优化目标 | 优化方向 | `speed`（运行速度）/ `size`（代码体积）/ `speed+size`（兼顾） |
-| 技术栈 | 目标代码的语言 | `python` / `cpp` / `cuda` / `rust` / `typescript` / `go` / `java` |
-| 重构范围 | 限定到子目录（可选） | 用户自行输入路径，默认全项目 |
-| 最大轮次 | 最多执行几轮重构（可选） | 默认 10 |
+Collect or infer these fields before starting side effects:
 
-2. **按顺序执行**如下隐藏流水线（每个工序的详细指令见 `hidden/<工序名>/SKILL.md`）：
+- `optimization_target`: `speed`, `size`, or `speed+size`
+- `tech_stack`: primary language or build ecosystem
+- `scope`: target path, defaulting to the repository root
+- `max_rounds`: maximum successful or attempted refactor rounds, defaulting to `10`
+- `main_branch`: branch to return to after each round, inferred from the current git branch when safe
 
-```
-baseline --> scanner --> ranker --> [refactor-one --> test-augment --> validator] x N
-                                         ^______ rollback on failure ________|
-```
+Ask the user only when a missing field materially affects correctness, safety, credentials, cost, or destructive operations. Record low-risk assumptions in the run summary.
 
-3. **仅汇报**高层进度给用户：
-   - "发现 X 个优化机会，预计总提升：Y%"
-   - "第 K/N 轮：正在重构 <module> ... 通过/失败"
-   - "最终总结：X/Y 个优化已应用，实际提升 Z%"
+## Hard Constraints
 
-## 硬约束（不可违反）
-- **现有测试只读**。绝不修改任何已有 test 文件，只能新增。
-- **每轮必须通过全部现有测试**才能进入下一轮。
-- **每轮必须有可量化的提升**，否则回滚。
-- **不得引入新的 lint/type 错误**。
+- Do not modify existing tests. Add new test files only.
+- Do not change public APIs unless the user explicitly approves that scope.
+- Do not continue if the baseline test suite fails.
+- Do not keep a round unless all validation gates pass.
+- Do not guess credentials, private services, deployment targets, or production permissions.
+- Preserve unrelated user changes in the worktree.
 
-## 最终输出
-完成后打印总结表：
+## Execution
 
-```
-重构总结
-========
-目标:       speed
-技术栈:     python
-轮次:       7/10（3 轮跳过）
-提升明细:
-  - module_a.process(): 340ms -> 120ms (-65%)
-  - module_b.parse():   89ms  ->  41ms (-54%)
-  - ...
-测试: 142 通过（新增 12）
-Lint: 0 个新错误
-```
+1. Run `hidden/baseline` to capture tests, lint/type status, benchmarks, and size metrics.
+2. Run `hidden/scanner` in read-only mode to identify optimization opportunities.
+3. Run `hidden/ranker` to create a dependency-aware execution queue.
+4. For each queued opportunity until `max_rounds` or completion:
+   - Run `hidden/refactor-one` for one minimal, API-compatible change.
+   - Run `hidden/test-augment` to add isolated tests for that change.
+   - Run `hidden/validator` to compare against the current baseline.
+   - If validation fails, run `hidden/rollback` and continue only when the failure policy allows it.
+   - If validation passes, preserve the round and update the baseline for the next round.
+
+## Progress Reporting
+
+Keep user-facing updates concise:
+
+- Baseline status and blocking failures
+- Number and type of opportunities found
+- Current round, target file/function, and result
+- Rollbacks with the gate that failed
+- Final improvement, tests, lint/type status, and files changed
+
+## Completion
+
+Finish only when one of these conditions is true:
+
+- At least one round passed and all final validation checks pass.
+- No viable opportunities remain after scan/ranking.
+- The workflow is blocked by missing user input, credentials, broken baseline, unsafe scope, or exhausted retry budget.
+
+Return a summary with applied rounds, skipped or rolled-back rounds, measured improvements, new tests, assumptions, and remaining risks.

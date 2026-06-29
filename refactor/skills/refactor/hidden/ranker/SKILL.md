@@ -1,50 +1,60 @@
 ---
 name: ranker
-description: 对扫描出的重构优化机会按 ROI、风险和依赖关系排序，生成高收益低风险优先的执行队列
+description: Rank scanned refactoring opportunities by expected return, confidence, risk, dependency order, and validation clarity to produce the execution queue for the refactor workflow.
 ---
 
-# Opportunity Ranker（隐藏 Skill）
+# Ranker
 
-## 职责
-对 Scanner 产出的所有优化机会按 ROI（投入产出比）排序，生成执行队列。
-核心原则：**高收益、低风险的先做**。
+Create a small, dependency-aware queue that starts with high-confidence, low-risk work.
 
-## 输入
-| 输入 | 来源 | 说明 |
-|------|------|------|
-| `opportunities` | Scanner skill | 所有发现的优化机会列表 |
-| `optimization_target` | Entry | 用于权重计算 |
+## Inputs
 
-## 排序算法
+- `run_id`
+- `optimization_target`
+- `opportunities_path`
+- `max_rounds`
 
-### ROI 打分公式
+## Scoring
+
+Calculate a score for each opportunity:
+
+```text
+score = improvement_midpoint * confidence_weight * validation_weight / (risk_weight + dependency_penalty)
 ```
-score = (estimated_improvement_pct * confidence_weight) / (risk_weight + dependency_count)
-```
 
-权重映射：
-| 因子 | high | medium | low |
-|------|------|--------|-----|
-| confidence_weight | 1.0 | 0.6 | 0.3 |
-| risk_weight | 0.3 | 0.6 | 1.0 |
+Weights:
 
-### 排序规则
-1. 按 `score` 降序排列
-2. 分数相同时，优先选择 `dependency_count = 0` 的独立项
-3. 有依赖关系的机会点，被依赖方必须排在依赖方前面（拓扑排序）
+- `confidence`: high `1.0`, medium `0.6`, low `0.3`
+- `risk`: low `0.5`, medium `1.0`, high `2.0`
+- `validation`: direct metric `1.0`, proxy metric `0.6`, unclear `0.0`
+- `dependency_penalty`: `0.2` per unresolved dependency
 
-## 输出
-保存排序后的执行队列至 `storage/workflows/<run_id>/execution_queue.json`：
+Reject opportunities with unclear validation, high risk without approval, or missing dependencies.
+
+## Ordering Rules
+
+1. Topologically order dependencies before dependents.
+2. Sort independent opportunities by descending score.
+3. Prefer smaller diffs when scores are close.
+4. Limit the active queue to `max_rounds`, but preserve the full ranked list for audit.
+
+## Output
+
+Write `storage/workflows/<run_id>/execution_queue.json`:
 
 ```json
 {
   "queue": [
-    { "rank": 1, "id": "OPP-003", "score": 2.67, "reason": "高收益低风险，无依赖" },
-    { "rank": 2, "id": "OPP-001", "score": 2.10, "reason": "高收益低风险，无依赖" },
-    { "rank": 3, "id": "OPP-007", "score": 1.45, "reason": "中等收益，依赖 OPP-001" }
+    {
+      "rank": 1,
+      "id": "OPP-001",
+      "score": 42.0,
+      "reason": "High confidence, low risk, direct benchmark metric."
+    }
   ],
-  "skipped": [
-    { "id": "OPP-012", "reason": "confidence 过低，跳过" }
-  ]
+  "deferred": [],
+  "rejected": []
 }
 ```
+
+Return the queue path and the first candidate.
