@@ -6,7 +6,7 @@ workflow:
   task_type: "iterative"
   visibility: "collapsed_by_default"
   requirement:
-    goal: "Safely improve a codebase for speed, size, or both through incremental, measurable, rollbackable refactoring."
+    goal: "Clarify the refactoring goal through $grill-me, then safely improve a codebase for speed, size, or both through incremental, measurable, rollbackable refactoring."
     output:
       format: "modified code, added tests, JSON audit artifacts, final report"
       destination: "target repository and storage/workflows/<run_id>/"
@@ -27,9 +27,12 @@ workflow:
         - "do not use private credentials unless explicitly supplied"
         - "do not deploy or publish"
         - "preserve unrelated worktree changes"
-      human_approval_required: false
+        - "use $grill-me to align requirements before command execution, branch creation, file edits, or audit artifact writes"
+      human_approval_required: true
     acceptance:
       checks:
+        - "$grill-me requirement alignment is complete before side effects"
+        - "optimization target, non-targets, scope, API boundaries, metrics, validation commands, risk limits, and max rounds are resolved"
         - "baseline tests pass before refactoring"
         - "each accepted round passes full tests"
         - "no new lint or type errors"
@@ -41,6 +44,7 @@ workflow:
         - "benchmark or runtime proxy"
         - "binary, bundle, dependency, or source-size metric"
       required_artifacts:
+        - "requirement alignment summary from $grill-me"
         - "baseline.json"
         - "opportunities.json"
         - "execution_queue.json"
@@ -54,6 +58,12 @@ workflow:
       - "Low-risk missing details may be inferred and recorded."
     open_questions: []
   capabilities:
+    - id: "grill-me"
+      purpose: "Interview the user one question at a time until refactor target, scope, API boundaries, metrics, validation, risks, and round limits are understood."
+      source: "external"
+      skill_path: "$grill-me"
+      permissions: ["read repository", "ask user for decisions"]
+      required: true
     - id: "baseline"
       purpose: "Capture tests, lint/type checks, benchmark, and size ground truth."
       source: "existing"
@@ -103,6 +113,11 @@ workflow:
       permissions: ["local git commands"]
       required: true
   inputs:
+    - id: "requirement_alignment"
+      type: "text"
+      required: true
+      source: "user"
+      validation: ["produced through $grill-me before side effects", "records optimization target, non-targets, scope, API boundaries, measurement approach, validation commands, risk limits, max rounds, assumptions, and open questions"]
     - id: "optimization_target"
       type: "text"
       required: true
@@ -143,7 +158,7 @@ workflow:
       type: "json"
       destination: "storage/workflows/<run_id>/"
       required: true
-      validation: ["valid JSON", "all completed steps recorded"]
+      validation: ["valid JSON", "requirement alignment recorded", "all completed steps recorded"]
     - id: "final_report"
       type: "report"
       destination: "final response"
@@ -204,12 +219,12 @@ workflow:
   steps:
     - id: "align-requirements"
       kind: "agent"
-      skill: "skills/refactor/SKILL.md"
-      description: "Collect or infer optimization target, tech stack, scope, max rounds, and validation commands."
+      skill: "$grill-me"
+      description: "Interview the user one question at a time, exploring the codebase instead of asking when possible, until refactor requirements are clear enough to capture the baseline."
       depends_on: []
       parallel_group: null
       inputs: ["optimization_target", "tech_stack", "scope", "max_rounds", "user_commands"]
-      outputs: ["requirement"]
+      outputs: ["requirement", "requirement_alignment"]
       timeout_seconds: null
       retry:
         max_attempts: 0
@@ -225,7 +240,7 @@ workflow:
       description: "Run baseline checks and metrics before code changes."
       depends_on: ["align-requirements"]
       parallel_group: null
-      inputs: ["requirement"]
+      inputs: ["requirement", "requirement_alignment"]
       outputs: ["baseline.json"]
       timeout_seconds: null
       retry:
@@ -377,10 +392,12 @@ workflow:
       kind: "requirement"
       depends_on: ["align-requirements"]
       pass_when:
+        - "requirement_alignment was produced through $grill-me before side effects"
         - "optimization target is known"
         - "tech stack is known or safely inferred"
         - "scope is known and exists"
       fail_when:
+        - "requirement_alignment is missing or has unresolved decisions that affect correctness, safety, scope, or metrics"
         - "required information affects safety or correctness and is missing"
       on_pass: "capture-baseline"
       on_fail: "awaiting_user"
@@ -427,6 +444,7 @@ workflow:
       - "API incompatibility"
       - "inconclusive validation after retry"
     ask_user_for:
+      - "unresolved $grill-me requirement alignment"
       - "public API change"
       - "destructive git cleanup"
       - "missing credentials"

@@ -1,6 +1,6 @@
 ---
 name: refactor
-description: Safely refactor legacy or performance-sensitive codebases toward speed, size, or speed+size goals through an auditable baseline, scan, rank, one-change-at-a-time implementation, test augmentation, validation, and rollback workflow. Use when Codex is asked to improve runtime performance, reduce code or binary size, remove dead or duplicate code, simplify legacy code, or run an incremental refactoring campaign with measurable acceptance checks.
+description: First align requirements through $grill-me, then safely refactor legacy or performance-sensitive codebases toward speed, size, or speed+size goals through an auditable baseline, scan, rank, one-change-at-a-time implementation, test augmentation, validation, and rollback workflow. Use when Codex is asked to improve runtime performance, reduce code or binary size, remove dead or duplicate code, simplify legacy code, or run an incremental refactoring campaign with measurable acceptance checks.
 ---
 
 # Refactor
@@ -13,7 +13,18 @@ Use [workflows/refactor.yaml](../../workflows/refactor.yaml) as the durable prot
 
 ## Required Inputs
 
-Collect or infer these fields before starting side effects:
+Before starting side effects, use the `$grill-me` skill to reach shared understanding with the user. Ask one question at a time, provide the recommended answer for each question, and explore the codebase instead of asking when the answer can be discovered locally.
+
+Resolve at least these decisions before `hidden/baseline` runs:
+
+- optimization target and non-targets
+- refactor scope and out-of-scope paths
+- public API compatibility boundaries
+- measurement method, validation commands, and acceptable proxies
+- acceptable speed/size tradeoffs and risk limits
+- maximum rounds and rollback expectations
+
+Collect or infer these fields during that alignment:
 
 - `optimization_target`: `speed`, `size`, or `speed+size`
 - `tech_stack`: primary language or build ecosystem
@@ -21,7 +32,7 @@ Collect or infer these fields before starting side effects:
 - `max_rounds`: maximum successful or attempted refactor rounds, defaulting to `10`
 - `main_branch`: branch to return to after each round, inferred from the current git branch when safe
 
-Ask the user only when a missing field materially affects correctness, safety, credentials, cost, or destructive operations. Record low-risk assumptions in the run summary.
+Ask the user whenever the `$grill-me` alignment has not resolved a decision that materially affects correctness, safety, credentials, cost, metrics, external side effects, or destructive operations. Record resolved assumptions and remaining open questions in the audit artifacts and run summary.
 
 ## Hard Constraints
 
@@ -34,10 +45,11 @@ Ask the user only when a missing field materially affects correctness, safety, c
 
 ## Execution
 
-1. Run `hidden/baseline` to capture tests, lint/type status, benchmarks, and size metrics.
-2. Run `hidden/scanner` in read-only mode to identify optimization opportunities.
-3. Run `hidden/ranker` to create a dependency-aware execution queue.
-4. For each queued opportunity until `max_rounds` or completion:
+1. Use `$grill-me` to complete requirement alignment before any command execution, branch creation, file edits, or audit artifact writes.
+2. Run `hidden/baseline` to capture tests, lint/type status, benchmarks, and size metrics.
+3. Run `hidden/scanner` in read-only mode to identify optimization opportunities.
+4. Run `hidden/ranker` to create a dependency-aware execution queue.
+5. For each queued opportunity until `max_rounds` or completion:
    - Run `hidden/refactor-one` for one minimal, API-compatible change.
    - Run `hidden/test-augment` to add isolated tests for that change.
    - Run `hidden/validator` to compare against the current baseline.

@@ -2,7 +2,7 @@
 
 A Codex skill for safely improving legacy or performance-sensitive codebases toward `speed`, `size`, or `speed+size` goals.
 
-The skill is designed as an auditable workflow: capture a clean baseline, scan for opportunities, rank them, apply one small change at a time, add isolated tests, validate measurable improvement, and roll back failed rounds.
+The skill is designed as an auditable workflow: align requirements through `$grill-me`, capture a clean baseline, scan for opportunities, rank them, apply one small change at a time, add isolated tests, validate measurable improvement, and roll back failed rounds.
 
 ## Layout
 
@@ -25,9 +25,9 @@ workflows/
 ## Workflow
 
 ```text
-baseline -> scanner -> ranker -> [refactor-one -> test-augment -> validator] x N
-                                      |                                  |
-                                      +----------- rollback on failure <-+
+$grill-me -> baseline -> scanner -> ranker -> [refactor-one -> test-augment -> validator] x N
+                                                |                                  |
+                                                +----------- rollback on failure <-+
 ```
 
 ## Guarantees
@@ -45,6 +45,7 @@ baseline -> scanner -> ranker -> [refactor-one -> test-augment -> validator] x N
 - `scope`: optional path to refactor, defaulting to the repository root
 - `max_rounds`: optional round limit, defaulting to `10`
 - `user_commands`: optional test, lint, type, benchmark, or build commands
+- `requirement_alignment`: `$grill-me` summary covering target, non-targets, scope, API boundaries, metrics, validation commands, risks, and round limits
 
 ## Outputs
 
