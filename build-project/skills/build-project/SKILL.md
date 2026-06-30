@@ -1,6 +1,6 @@
 ---
 name: build-project
-description: 小步迭代地把开发目标拆成初始化、需求切片、编码、测试、提交、评审和 PR 交付循环，适用于用户要求开始开发、build 或提出新的开发目标时
+description: 先通过 $grill-me 与用户对齐需求，再小步迭代地把开发目标拆成初始化、需求切片、编码、测试、提交、评审和 PR 交付循环，适用于用户要求开始开发、build 或提出新的开发目标时
 ---
 
 # build-project
@@ -17,14 +17,24 @@ Use this skill when the user says "开始开发", "build", `$build-project`, `/b
 
 ## Required Inputs
 
-Collect or infer these fields before starting side effects:
+Before starting side effects, use the `$grill-me` skill to reach shared understanding with the user. Ask one question at a time, provide the recommended answer for each question, and explore the codebase instead of asking when the answer can be discovered locally.
+
+Resolve at least these decisions before `hidden/init` runs:
+
+- goal and non-goals
+- expected user-visible behavior
+- constraints, risks, and external side effects
+- acceptance checks and validation command
+- first iteration scope and likely follow-up iterations
+
+Collect or infer these fields during that alignment:
 
 - `goal`: the overall development goal.
 - `stack`: primary language or build ecosystem. Infer from `pyproject.toml`, `package.json`, `go.mod`, or `Makefile` when safe.
 - `base_branch`: target branch for the PR, defaulting to the repository default branch or `main`.
 - `validation_command`: test command, inferred from repository metadata when safe.
 
-Ask the user only when a missing field materially affects correctness, safety, credentials, external side effects, or destructive operations. Record low-risk assumptions in `.build-state.json` and the final response.
+Ask the user whenever the `$grill-me` alignment has not resolved a decision that materially affects correctness, safety, credentials, external side effects, or destructive operations. Record resolved assumptions and remaining open questions in `.build-state.json` and the final response.
 
 ## Hard Constraints
 
@@ -37,15 +47,16 @@ Ask the user only when a missing field materially affects correctness, safety, c
 
 ## Execution
 
-1. Run `hidden/init` to validate prerequisites, create a feature branch, and initialize `.build-state.json`.
-2. For each iteration:
+1. Use `$grill-me` to complete requirement alignment before any branch creation, file edits, issue creation, or `.build-state.json` writes.
+2. Run `hidden/init` to validate prerequisites, create a feature branch, and initialize `.build-state.json`.
+3. For each iteration:
    - Run `hidden/spec` to create or record one small issue with acceptance checks.
    - Run `hidden/code` to implement the minimum scoped change.
    - Run `hidden/test` to execute the inferred or supplied validation command.
    - Run `hidden/commit` only when tests pass or the user explicitly approves a force commit.
    - Run `hidden/review-gate` to decide whether to continue, repair, redesign the iteration, force commit, or finish.
-3. When the review gate returns `done`, run `hidden/merge` to create a PR and stop before merging.
-4. If an iteration must be abandoned, run `hidden/rollback` to remove only that iteration's uncommitted or explicitly tracked changes while preserving unrelated work.
+4. When the review gate returns `done`, run `hidden/merge` to create a PR and stop before merging.
+5. If an iteration must be abandoned, run `hidden/rollback` to remove only that iteration's uncommitted or explicitly tracked changes while preserving unrelated work.
 
 ## Progress Reporting
 

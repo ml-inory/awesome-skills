@@ -6,7 +6,7 @@ workflow:
   task_type: "hybrid"
   visibility: "collapsed_by_default"
   requirement:
-    goal: "Implement a user-supplied development goal through small, reviewable iterations that end in a pull request."
+    goal: "Clarify a user-supplied development goal through $grill-me, then implement it through small, reviewable iterations that end in a pull request."
     output:
       format: "modified code, GitHub issues, commits, pull request, .build-state.json audit trail, final report"
       destination: "target repository, GitHub repository, and final response"
@@ -26,11 +26,14 @@ workflow:
         - "do not deploy, publish, or run production operations"
         - "do not automatically merge pull requests"
         - "preserve unrelated worktree changes"
+        - "use $grill-me to align requirements before branch creation, file edits, issue creation, or .build-state.json writes"
       human_approval_required: true
     acceptance:
       checks:
+        - "$grill-me requirement alignment is complete before side effects"
         - "goal is known before side effects"
         - "stack and validation command are known or safely inferred"
+        - "goal, non-goals, acceptance checks, validation approach, and first iteration scope are resolved"
         - "each iteration has one issue with acceptance checks"
         - "only scoped files are edited and staged"
         - "tests pass before normal commits"
@@ -44,6 +47,7 @@ workflow:
         - "PR URL availability"
       required_artifacts:
         - ".build-state.json during the run"
+        - "requirement alignment summary from $grill-me"
         - "GitHub issue per iteration"
         - "commit per accepted iteration"
         - "pull request URL when completed"
@@ -55,6 +59,12 @@ workflow:
       - "Low-risk stack and validation defaults may be inferred from repository metadata."
     open_questions: []
   capabilities:
+    - id: "grill-me"
+      purpose: "Interview the user one question at a time until requirements, constraints, acceptance checks, validation, and first iteration scope are understood."
+      source: "external"
+      skill_path: "$grill-me"
+      permissions: ["read repository", "ask user for decisions"]
+      required: true
     - id: "build-project-init"
       purpose: "Initialize run state, detect stack and validation, create feature branch."
       source: "generate"
@@ -116,6 +126,11 @@ workflow:
       permissions: ["gh issue", "gh pr"]
       required: true
   inputs:
+    - id: "requirement_alignment"
+      type: "text"
+      required: true
+      source: "user"
+      validation: ["produced through $grill-me before side effects", "records goal, non-goals, acceptance checks, validation approach, first iteration scope, assumptions, and open questions"]
     - id: "goal"
       type: "text"
       required: true
@@ -156,7 +171,7 @@ workflow:
       type: "json"
       destination: ".build-state.json during run"
       required: true
-      validation: ["valid JSON", "records goal, branch, iterations, issues, tests, commits, decisions"]
+      validation: ["valid JSON", "records requirement alignment, goal, branch, iterations, issues, tests, commits, decisions"]
     - id: "github_issues"
       type: "text"
       destination: "GitHub repository"
@@ -232,12 +247,12 @@ workflow:
   steps:
     - id: "align-requirements"
       kind: "agent"
-      skill: "skills/build-project/SKILL.md"
-      description: "Collect or infer goal, stack, base branch, validation command, and GitHub capability."
+      skill: "$grill-me"
+      description: "Interview the user one question at a time, exploring the codebase instead of asking when possible, until requirements are clear enough to initialize the build-project run."
       depends_on: []
       parallel_group: null
       inputs: ["goal", "stack", "base_branch", "validation_command", "github_auth"]
-      outputs: ["requirement"]
+      outputs: ["requirement", "requirement_alignment"]
       timeout_seconds: null
       retry:
         max_attempts: 0
@@ -253,7 +268,7 @@ workflow:
       description: "Create feature branch and initialize .build-state.json."
       depends_on: ["align-requirements"]
       parallel_group: null
-      inputs: ["requirement"]
+      inputs: ["requirement", "requirement_alignment"]
       outputs: ["build_state", "branch", "validation_command"]
       timeout_seconds: null
       retry:
@@ -456,11 +471,13 @@ workflow:
       kind: "requirement"
       depends_on: ["align-requirements"]
       pass_when:
+        - "requirement_alignment was produced through $grill-me before side effects"
         - "goal is known"
         - "stack is known or safely inferred"
         - "validation command is known or safely inferred"
         - "GitHub issue and PR capability is available"
       fail_when:
+        - "requirement_alignment is missing or has unresolved decisions that affect correctness, safety, or scope"
         - "goal is missing"
         - "required validation command cannot be inferred"
         - "GitHub credentials or permissions are unavailable"
@@ -516,6 +533,7 @@ workflow:
       - "repair attempts exhausted"
       - "unsafe scope detected after edits"
     ask_user_for:
+      - "unresolved $grill-me requirement alignment"
       - "missing goal"
       - "missing validation command"
       - "missing GitHub authentication or permissions"
