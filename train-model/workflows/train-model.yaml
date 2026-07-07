@@ -1,0 +1,556 @@
+workflow:
+  schema_version: '1.0'
+  name: train-model
+  entry_skill: train-model/skills/train-model/SKILL.md
+  mode: guided
+  task_type: hybrid
+  visibility: collapsed_by_default
+  requirement:
+    goal: 找好用的深度学习模型：优先复用开源预训练模型，仅在预训练模型不满足用户精度指标时才进入自研训练。最终产出 PyTorch 权重、ONNX 模型、导出和验证脚本，面向 AX NPU 部署。
+    output:
+      format: 文件集合（.pt, .onnx, .py, .json, .md）
+      destination: 用户指定的输出目录
+      consumer: both
+    constraints:
+      time_budget: ''
+      cost_budget: ''
+      technology:
+      - PyTorch
+      - ONNX
+      - onnxruntime
+      - TensorBoard
+      security: []
+      human_approval_required: true
+    acceptance:
+      checks:
+      - ONNX 模型可用 onnxruntime 正常推理
+      - ONNX 推理精度与 PyTorch 模型一致（相对误差 < 1e-5）
+      - 导出脚本 export.py 可独立运行复现 ONNX 导出
+      - 精度验证脚本 validate.py 可独立运行
+      - 调研报告 research_report.md 包含候选模型实测精度对比
+      - '快速路径: 预训练模型实测精度 >= 用户目标，best_model.pt 为下载的预训练权重'
+      - '完整路径: training_log.json 记录完整训练日志'
+      metrics: []
+      required_artifacts:
+      - best_model.pt
+      - model.onnx
+      - export.py
+      - validate.py
+      - research_report.md
+      conditional_artifacts:
+        fast_path: []
+        full_path:
+        - training_log.json
+    assumptions:
+    - PyTorch 和 CUDA 环境已就绪
+    - 用户数据集已按 train/val 目录结构组织
+    - 本地有可用 GPU
+    open_questions: []
+  capabilities:
+  - id: grill-me
+    purpose: 训练需求对齐访谈
+    source: existing
+    skill_path: /home/yrz/.codex/skills/grill-me/SKILL.md
+    permissions: []
+    required: true
+  - id: train-model-research
+    purpose: 搜索候选模型，下载预训练权重在验证集上实测精度，产出对比报告与路由建议
+    source: generate
+    skill_path: train-model/skills/train-model/hidden/research/SKILL.md
+    permissions:
+    - read
+    - web_search
+    - exec
+    required: true
+  - id: train-model-setup
+    purpose: 验证数据集完整性，配置训练基础设施
+    source: generate
+    skill_path: train-model/skills/train-model/hidden/setup/SKILL.md
+    permissions:
+    - read
+    - write
+    required: false
+  - id: train-model-train
+    purpose: 执行训练循环、自动调参、验证监控，最多 3 轮重试
+    source: generate
+    skill_path: train-model/skills/train-model/hidden/train/SKILL.md
+    permissions:
+    - read
+    - write
+    - exec
+    required: false
+  - id: train-model-export
+    purpose: 导出 ONNX 模型并生成可复用导出脚本
+    source: generate
+    skill_path: train-model/skills/train-model/hidden/export/SKILL.md
+    permissions:
+    - read
+    - write
+    - exec
+    required: true
+  - id: train-model-validate
+    purpose: ONNX 精度验证，生成独立验证脚本
+    source: generate
+    skill_path: train-model/skills/train-model/hidden/validate/SKILL.md
+    permissions:
+    - read
+    - write
+    - exec
+    required: true
+  - id: pytorch-gpu
+    purpose: 本地 GPU 训练算力
+    source: external
+    skill_path: ''
+    permissions:
+    - exec
+    required: true
+  - id: tensorboard
+    purpose: 训练过程可视化监控
+    source: external
+    skill_path: ''
+    permissions:
+    - read
+    required: false
+  inputs:
+  - id: user_goal
+    type: text
+    required: true
+    source: user
+    validation:
+    - non_empty
+  - id: dataset_path
+    type: directory
+    required: true
+    source: user
+    validation:
+    - directory_exists
+    - contains_train_val_subdirs
+  - id: output_dir
+    type: directory
+    required: true
+    source: user
+    validation:
+    - writable
+  outputs:
+  - id: best_model_pt
+    type: file
+    destination: '{output_dir}/best_model.pt'
+    required: true
+    validation:
+    - file_exists
+    - valid_pytorch_state_dict
+    note: '快速路径: 预训练权重; 完整路径: 训练最优 checkpoint'
+  - id: model_onnx
+    type: file
+    destination: '{output_dir}/model.onnx'
+    required: true
+    validation:
+    - file_exists
+    - valid_onnx_model
+  - id: export_script
+    type: file
+    destination: '{output_dir}/export.py'
+    required: true
+    validation:
+    - file_exists
+    - executable
+    - reproduces_onnx
+  - id: validate_script
+    type: file
+    destination: '{output_dir}/validate.py'
+    required: true
+    validation:
+    - file_exists
+    - executable
+    - outputs_accuracy_json
+  - id: research_report
+    type: file
+    destination: '{output_dir}/research_report.md'
+    required: true
+    validation:
+    - file_exists
+    - at_least_2_candidates
+    - includes_benchmark_results
+  - id: training_log
+    type: file
+    destination: '{output_dir}/training_log.json'
+    required: false
+    validation:
+    - file_exists
+    - valid_json
+    note: 仅完整路径需要
+  state_machine:
+    initial: draft
+    states:
+    - draft
+    - awaiting_user
+    - ready
+    - running
+    - validating
+    - retrying
+    - rolling_back
+    - degraded
+    - blocked
+    - failed
+    - succeeded
+    terminal:
+    - blocked
+    - failed
+    - succeeded
+    transitions:
+    - from: draft
+      to: awaiting_user
+      when: 需求对齐完成，等待用户确认调研推荐和路径选择
+    - from: awaiting_user
+      to: ready
+      when: 用户确认模型选型和路径（快速/完整），所有前置条件满足
+    - from: ready
+      to: running
+      when: 开始执行选定路径
+    - from: running
+      to: validating
+      when: 当前路径步骤执行完成
+    - from: validating
+      to: succeeded
+      when: 所有 acceptance checks 通过
+    - from: validating
+      to: retrying
+      when: 精度不达标且重试预算未耗尽（仅完整路径）
+    - from: retrying
+      to: running
+      when: 调整超参后重新训练
+    - from: validating
+      to: awaiting_user
+      when: 重试预算耗尽，精度仍不达标，交用户裁决
+    - from: running
+      to: rolling_back
+      when: 训练过程中出现不可恢复的环境错误
+    - from: rolling_back
+      to: failed
+      when: 回滚完成
+    - from: running
+      to: degraded
+      when: 部分可选产出失败但核心模型可用
+    - from: running
+      to: blocked
+      when: 缺少必需的外部输入（数据集、GPU 等）
+  steps:
+  - id: step-0-grill
+    kind: agent
+    skill: grill-me
+    description: 通过 grill-me 与用户对齐需求：任务类型、数据集路径、精度/效率目标
+    depends_on: []
+    parallel_group: null
+    inputs:
+    - user_goal
+    - dataset_path
+    - output_dir
+    outputs:
+    - requirement_doc (任务类型、精度目标、延迟约束、数据规模等)
+    timeout_seconds: 600
+    retry:
+      max_attempts: 0
+      retry_on: []
+      backoff: none
+    on_failure:
+      action: ask_user
+      target_step: null
+    visibility: user_visible
+  - id: step-1-research
+    kind: agent
+    skill: train-model-research
+    description: 搜索 2-4 个候选模型架构，下载预训练权重
+    depends_on:
+    - step-0-grill
+    parallel_group: null
+    inputs:
+    - requirement_doc
+    outputs:
+    - candidate_models (候选模型列表及预训练权重路径)
+    timeout_seconds: 600
+    retry:
+      max_attempts: 1
+      retry_on:
+      - insufficient_candidates
+      backoff: fixed
+    on_failure:
+      action: ask_user
+      target_step: null
+    visibility: summarized
+  - id: step-1-evaluate
+    kind: agent
+    skill: train-model-research
+    description: 在用户验证集上实测每个候选预训练模型的精度，产出 benchmark 数据
+    depends_on:
+    - step-1-research
+    parallel_group: null
+    inputs:
+    - candidate_models
+    - dataset_path
+    outputs:
+    - benchmark_results (各候选在验证集上的实测精度)
+    timeout_seconds: 1800
+    retry:
+      max_attempts: 1
+      retry_on:
+      - eval_failure
+      backoff: fixed
+    on_failure:
+      action: degrade
+      target_step: null
+    visibility: user_visible
+  - id: step-1-report
+    kind: synthesis
+    skill: train-model-research
+    description: 生成候选对比报告 research_report.md，含实测精度和路由建议（fast/full）
+    depends_on:
+    - step-1-evaluate
+    parallel_group: null
+    inputs:
+    - benchmark_results
+    - requirement_doc
+    outputs:
+    - research_report.md
+    - verdict (fast | full)
+    timeout_seconds: 120
+    retry:
+      max_attempts: 0
+      retry_on: []
+      backoff: none
+    on_failure:
+      action: fail
+      target_step: null
+    visibility: user_visible
+  - id: gate-1-approval
+    kind: gate
+    skill: null
+    description: 用户审阅 research_report.md，确认模型选型和路由路径（快速/完整）
+    depends_on:
+    - step-1-report
+    parallel_group: null
+    inputs:
+    - research_report.md
+    outputs:
+    - selected_model
+    - chosen_path (fast | full)
+    timeout_seconds: null
+    retry:
+      max_attempts: 0
+      retry_on: []
+      backoff: none
+    on_failure:
+      action: ask_user
+      target_step: null
+    visibility: user_visible
+  - id: gate-1-route
+    kind: gate
+    skill: null
+    description: '路由决策: fast → 跳至 step-4-export; full → 进入 step-2-setup'
+    depends_on:
+    - gate-1-approval
+    parallel_group: null
+    inputs:
+    - chosen_path
+    outputs:
+    - route_target (step-2-setup | step-4-export)
+    timeout_seconds: null
+    retry:
+      max_attempts: 0
+      retry_on: []
+      backoff: none
+    on_failure:
+      action: fail
+      target_step: null
+    visibility: hidden
+  - id: step-2-setup
+    kind: agent
+    skill: train-model-setup
+    description: '[仅完整路径] 验证数据集完整性，配置 DataLoader、优化器搜索空间'
+    depends_on:
+    - gate-1-route
+    parallel_group: null
+    inputs:
+    - dataset_path
+    - selected_model
+    - requirement_doc
+    outputs:
+    - training_config.json
+    - model_code.py
+    timeout_seconds: 300
+    retry:
+      max_attempts: 1
+      retry_on:
+      - dataset_load_failure
+      backoff: fixed
+    on_failure:
+      action: ask_user
+      target_step: null
+    visibility: summarized
+  - id: step-3-train
+    kind: agent
+    skill: train-model-train
+    description: '[仅完整路径] 执行训练循环，自动调参，最多 3 轮重试'
+    depends_on:
+    - step-2-setup
+    parallel_group: null
+    inputs:
+    - training_config.json
+    - model_code.py
+    - dataset_path
+    outputs:
+    - best_model.pt
+    - training_log.json
+    - tensorboard_logs/
+    timeout_seconds: 86400
+    retry:
+      max_attempts: 3
+      retry_on:
+      - accuracy_below_target
+      - training_diverged
+      backoff: exponential
+    on_failure:
+      action: ask_user
+      target_step: null
+    visibility: user_visible
+  - id: gate-3-check
+    kind: gate
+    skill: null
+    description: '[仅完整路径] 检查训练精度；不达标视重试预算决定 retry 或 user_decision'
+    depends_on:
+    - step-3-train
+    parallel_group: null
+    inputs:
+    - training_log.json
+    - requirement_doc
+    outputs:
+    - training_verdict (pass | retry | user_decision)
+    timeout_seconds: null
+    retry:
+      max_attempts: 0
+      retry_on: []
+      backoff: none
+    on_failure:
+      action: ask_user
+      target_step: null
+    visibility: user_visible
+  - id: step-4-export
+    kind: agent
+    skill: train-model-export
+    description: 导出 ONNX 模型并生成 export.py。快速路径用预训练权重，完整路径用训练 checkpoint
+    depends_on:
+    - gate-1-route
+    - gate-3-check
+    parallel_group: null
+    inputs:
+    - best_model.pt
+    - model_code.py
+    outputs:
+    - model.onnx
+    - export.py
+    timeout_seconds: 300
+    retry:
+      max_attempts: 2
+      retry_on:
+      - onnx_export_failure
+      - onnx_inference_error
+      backoff: fixed
+    on_failure:
+      action: fail
+      target_step: null
+    visibility: user_visible
+  - id: step-5-validate
+    kind: agent
+    skill: train-model-validate
+    description: 对比 ONNX 与 PyTorch 推理精度，生成 validate.py
+    depends_on:
+    - step-4-export
+    parallel_group: null
+    inputs:
+    - model.onnx
+    - best_model.pt
+    - validation_dataset
+    - model_code.py
+    outputs:
+    - validate.py
+    - accuracy_report.json
+    timeout_seconds: 600
+    retry:
+      max_attempts: 1
+      retry_on:
+      - accuracy_mismatch
+      backoff: fixed
+    on_failure:
+      action: degrade
+      target_step: null
+    visibility: user_visible
+  gates:
+  - id: gate-1-approval
+    kind: approval
+    depends_on:
+    - step-1-report
+    pass_when:
+    - 用户确认模型选型和路径选择
+    fail_when:
+    - 用户拒绝所有候选方案
+    on_pass: gate-1-route
+    on_fail: blocked
+  - id: gate-1-route
+    kind: validation
+    depends_on:
+    - gate-1-approval
+    pass_when:
+    - chosen_path == fast → 跳至 step-4-export
+    - chosen_path == full → 进入 step-2-setup
+    fail_when:
+    - chosen_path 未定义
+    on_pass: step-2-setup 或 step-4-export
+    on_fail: blocked
+  - id: gate-3-check
+    kind: validation
+    depends_on:
+    - step-3-train
+    pass_when:
+    - 精度指标达到用户需求目标
+    fail_when:
+    - 精度不达标 AND retry budget > 0 → retry
+    - 精度不达标 AND retry budget == 0 → ask_user
+    on_pass: step-4-export
+    on_fail: step-3-train 或 blocked
+  failure_policy:
+    default_action: ask_user
+    max_total_attempts: 3
+    rollback_required_for:
+    - step-3-train
+    ask_user_for:
+    - 精度持续不达标
+    - 数据集加载失败
+    - ONNX 导出精度不匹配
+    - GPU 不可用
+    - 所有候选预训练模型均不达标
+    degraded_output_allowed: true
+  observability:
+    progress_updates: milestone
+    audit_log:
+      enabled: true
+      include_hidden_steps: true
+    artifacts:
+      record_intermediate_outputs: true
+      retention: workflow-local
+  completion:
+    success_when:
+    - best_model.pt 存在且可通过 torch.load 正常加载
+    - model.onnx 存在且可通过 onnxruntime 正常推理
+    - export.py 可独立运行并复现 ONNX 导出
+    - validate.py 可独立运行并输出精度对比 JSON
+    - ONNX 与 PyTorch 推理输出相对误差 < 1e-5
+    - research_report.md 包含候选实测精度对比与路由建议
+    failure_when:
+    - 数据集不可读或格式不符合预期
+    - GPU 不可用且无替代策略
+    - 所有候选预训练模型实测精度均不达标且用户拒绝进入完整路径
+    - 训练发散且 3 轮重试无法收敛
+    - ONNX 导出失败且无法修复
+    final_response:
+      include_artifacts: true
+      include_assumptions: true
+      include_limitations: true
