@@ -47,3 +47,9 @@ find "$REPO_DIR" -mindepth 3 -maxdepth 3 -type f \( -name "*.yaml" -o -name "*.y
     ln -sfn "$workflow_file" "$WORKFLOWS_DIR/$name"
     echo "Linked workflow: $name"
 done
+
+# grill-me is a top-level skill (not inside skills/ subdirectory)
+if [ -f "$REPO_DIR/grill-me/SKILL.md" ]; then
+    ln -sfn "$REPO_DIR/grill-me" "$SKILLS_DIR/grill-me"
+    echo "Linked skill: grill-me"
+fi
