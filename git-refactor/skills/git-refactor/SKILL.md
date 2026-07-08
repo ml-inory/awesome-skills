@@ -31,15 +31,26 @@ $git-refactor [<project_directory>] [--chip AX650N|AX630C|AX650C]
 ## What It Does
 
 1. **Init**: Creates feature branch `fix/run-on-ax-board` from the current branch.
-2. **Parse**: Extracts all bash code blocks from README.md in order.
+2. **Parse**: Parses README.md intelligently:
+   - Detects board vs x86 sections (e.g., whisper.axera has model export on x86, inference on board)
+   - Tracks `cd` directory context across steps
+   - Captures expected output examples for fuzzy verification
+   - Classifies steps as `must_pass`, `download`, or `informational`
 3. **Board**: Selects an available AX board via the internal dashboard.
-4. **Execute Loop**: For each README step:
-   - Executes it on the selected AX board via `$remote-infer`
-   - If it succeeds → moves to next step
-   - If it fails → auto-diagnoses root cause, auto-fixes (code or README), commits, re-verifies on board
+4. **Execute Loop**: For each board-relevant README step:
+   - Executes it on the selected AX board via `$remote-infer` with correct working directory
+   - Compares output against README's expected output
+   - If it fails → auto-diagnoses root cause, auto-fixes (code or README), commits, re-verifies
    - Retries up to 3 times per step; after 3 failures, asks user for guidance
-5. **End-to-End**: After all individual steps pass, runs the full README path end-to-end on a clean board state.
-6. **Report**: Generates `README-fix-report.md` with one entry per fix (original issue → root cause → fix → verification). This file is NOT committed.
+5. **End-to-End**: After all individual steps pass, runs the full README path end-to-end on a clean board.
+6. **Report**: Generates `README-fix-report.md` with one entry per fix. NOT committed.
+
+## Supported README Patterns
+
+Handles common AX project README structures like:
+- **whisper.axera style**: separate x86 (model export) and board (build + inference) sections
+- **YOLO.axera style**: model download → compile → run on board
+- **Generic style**: single flat list of commands, all assumed board-side
 
 ## Required Inputs
 
@@ -55,36 +66,23 @@ $git-refactor [<project_directory>] [--chip AX650N|AX630C|AX650C]
 - Fix BOTH code and README to keep them consistent.
 - Each independent fix must be its own git commit.
 
-## Execution
-
-1. Run `hidden/init` to validate project and create feature branch.
-2. Run `hidden/parse-readme` to extract executable steps from README.
-3. Run `hidden/select-board` from remote-infer to pick an AX board.
-4. For each parsed step:
-   a. Run `hidden/execute-step` to execute on board.
-   b. If failure: run `hidden/diagnose` to classify and locate root cause.
-   c. Run `hidden/fix` to apply the fix and commit.
-   d. Run `hidden/verify` to re-execute and confirm the fix.
-   e. Retry up to 3 times per step if verification still fails.
-5. Run end-to-end validation on a clean board state.
-6. Run `hidden/report` to generate `README-fix-report.md`.
-
 ## Progress Reporting
 
 Keep user-facing updates concise:
 - Selected board IP, chip, and hostname.
-- Current step being executed (N of total, with the command shown).
-- Step result (pass / fail with error snippet).
+- Board section detection result (e.g., "Found x86 and board sections, targeting board only").
+- Current step being executed (N of total, with step_type and command shown).
+- Step result (pass / fail with error snippet, output vs expectation match).
+- Working directory context changes.
 - Diagnosis result (README error vs code bug, root cause).
 - Fix applied (files changed, commit message).
 - Verification result.
-- End-to-end result.
-- Final report location.
+- Fix report location.
 
 ## Completion
 
 Finish only when one of these conditions is true:
-- All README steps pass on board, end-to-end validation passes, report is generated.
+- All board-relevant README steps pass, end-to-end validation passes, report is generated.
 - No AX board is available for any chip.
 - User declines to provide required input at a blocked gate.
 - An unrecoverable step failure occurs and user declines further fixes.

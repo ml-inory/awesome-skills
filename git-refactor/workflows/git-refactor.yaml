@@ -6,7 +6,7 @@ workflow:
   task_type: "iterative"
   visibility: "collapsed_by_default"
   requirement:
-    goal: "Take a local directory of a GitHub project, follow its README to set up and run on an AX board via remote-infer, identify and fix all bugs/errors encountered, making the project runnable from scratch on board with minimal mental burden."
+    goal: "Take a local directory of a GitHub project, parse its README to identify board-relevant execution steps, follow them on an AX board via remote-infer, fix all bugs/errors encountered, making the project runnable from scratch on board with minimal mental burden."
     output:
       format: "Modified project files, git commits (one per fix), local README-fix-report.md (not committed)"
       destination: "Local project directory + git repo"
@@ -30,16 +30,17 @@ workflow:
     acceptance:
       checks:
         - "Project directory is valid and contains a README.md"
-        - "README is parsed, all bash code blocks identified and ordered"
+        - "README board vs x86 sections are identified; only board steps extracted"
+        - "Directory context (cd commands) is tracked across parsed steps"
         - "Feature branch 'fix/run-on-ax-board' is created"
-        - "All README steps are sequentially executed on the selected AX board"
+        - "All board-relevant README steps are sequentially executed on the selected AX board"
         - "Each execution failure is auto-analyzed, auto-fixed (≤3 retries), or flagged for user intervention"
         - "Each independent fix has its own git commit on the feature branch"
         - "End-to-end: full README path runs on board without silent errors"
         - "README-fix-report.md is generated locally with one entry per fix"
         - "README-fix-report.md is NOT committed"
       metrics:
-        - "Total README steps count"
+        - "Total README steps count (board-only)"
         - "Steps succeeded on first attempt"
         - "Steps auto-fixed and retried"
         - "Steps requiring user intervention"
@@ -50,11 +51,13 @@ workflow:
         - "README-fix-report.md (local, uncommitted)"
         - "Updated README.md and repaired project code"
     assumptions:
-      - "The project has a readable README.md in its root"
+      - "README follows common AX project patterns (whisper.axera, YOLO.axera style) with board sections"
+      - "If no explicit board section marker, all steps are assumed board-relevant"
       - "The AX board has basic environment (Python3, git, common build tools)"
       - "User has internal network access to the AX dashboard at http://10.126.35.22:25000/api/devices"
       - "SSH credentials are available via config/agent"
       - "Chip priority: AX650N > AX630C > AX650C; ask user if none available"
+      - "Board-side work goes under /tmp/git-refactor/<project_name>/"
     open_questions: []
 
   capabilities:
@@ -89,13 +92,13 @@ workflow:
       permissions: ["read project directory", "git branch", "git status"]
       required: true
     - id: "git-refactor-parse-readme"
-      purpose: "Parse README.md into an ordered list of executable bash code blocks with context"
+      purpose: "Parse README.md into ordered board-relevant steps with directory context, step type classification, and expected output hints"
       source: "generate"
       skill_path: "skills/git-refactor/hidden/parse-readme/SKILL.md"
       permissions: ["read README.md"]
       required: true
     - id: "git-refactor-execute-step"
-      purpose: "Execute one parsed README step on the selected AX board via remote-infer"
+      purpose: "Execute one parsed README step on the selected AX board with correct working directory, handle downloads and output comparison"
       source: "generate"
       skill_path: "skills/git-refactor/hidden/execute-step/SKILL.md"
       permissions: ["SSH to board", "execute remote commands", "transfer files"]
@@ -174,7 +177,7 @@ workflow:
       destination: "project files in working tree"
       required: false
       validation:
-        - "All bugs encountered along README path are fixed"
+        - "All bugs encountered along README board path are fixed"
 
   state_machine:
     initial: "draft"
@@ -275,11 +278,11 @@ workflow:
     - id: "parse-readme"
       kind: "agent"
       skill: "skills/git-refactor/hidden/parse-readme/SKILL.md"
-      description: "Parse README.md, extract all bash code blocks in order, annotate with line numbers and surrounding context"
+      description: "Parse README.md: detect board vs x86 sections, extract ordered board steps with cd-based directory context, classify as must_pass/download/informational, capture expected output hints"
       depends_on: ["init-project"]
       parallel_group: null
       inputs: ["project_dir/README.md"]
-      outputs: ["parsed_steps"]
+      outputs: ["parsed_steps", "board_section_detected", "initial_working_dir"]
       timeout_seconds: 30
       retry:
         max_attempts: 0
@@ -293,7 +296,7 @@ workflow:
     - id: "step-execution-loop"
       kind: "gate"
       skill: "skills/git-refactor/SKILL.md"
-      description: "Iterate over parsed_steps. For each step: execute on board → if fail: diagnose → fix → commit → verify. Retry up to 3 times per step. After 3 failures: ask user."
+      description: "Iterate over parsed_steps. For each step: execute on board in correct working_dir → compare output against README expectations → if fail: diagnose → fix → commit → verify. Retry up to 3 times per step. After 3 failures: ask user."
       depends_on: ["select-board", "parse-readme"]
       parallel_group: null
       inputs: ["parsed_steps", "selected_board"]
@@ -311,7 +314,7 @@ workflow:
     - id: "execute-one-step"
       kind: "agent"
       skill: "skills/git-refactor/hidden/execute-step/SKILL.md"
-      description: "Execute a single parsed README step on the selected AX board. Transfer required files if the step references local paths. Capture stdout, stderr, exit code."
+      description: "Execute a single parsed README step on the AX board at the correct working_dir. Handle downloads, transfer model files, compare output against README expected output. Capture stdout, stderr, exit_code, output_matches_expectation."
       depends_on: []
       parallel_group: null
       inputs: ["step", "selected_board", "project_dir"]
@@ -329,7 +332,7 @@ workflow:
     - id: "diagnose-failure"
       kind: "agent"
       skill: "skills/git-refactor/hidden/diagnose/SKILL.md"
-      description: "Analyze step_result failure. Search codebase for referenced files/commands/errors. Classify as: README error, code bug, missing dependency, environment issue. Identify root cause and file locations."
+      description: "Analyze step_result failure. Search codebase for referenced files/commands/errors. Classify as: README error, code bug, missing dependency, environment issue, or cd context error. Identify root cause and file locations."
       depends_on: []
       parallel_group: null
       inputs: ["step_result", "step", "project_dir"]
@@ -365,7 +368,7 @@ workflow:
     - id: "verify-fix"
       kind: "agent"
       skill: "skills/git-refactor/hidden/verify/SKILL.md"
-      description: "Re-execute the repaired step on the board. If it passes, mark the fix as verified in fix_log. If it still fails, return to diagnosis."
+      description: "Re-execute the repaired step on the board at the correct working_dir. Compare against README expected output. If passes, mark verified. If new error, route back to diagnosis."
       depends_on: []
       parallel_group: null
       inputs: ["step", "selected_board", "project_dir", "fix_log_entry"]
@@ -383,7 +386,7 @@ workflow:
     - id: "end-to-end-validation"
       kind: "agent"
       skill: "skills/git-refactor/hidden/execute-step/SKILL.md"
-      description: "After all steps pass individually, run the full README path end-to-end on a fresh board environment to confirm everything works together"
+      description: "After all steps pass individually, run the full board README path end-to-end on a clean board state to confirm everything works together"
       depends_on: ["step-execution-loop"]
       parallel_group: null
       inputs: ["parsed_steps", "selected_board", "project_dir"]
@@ -445,9 +448,9 @@ workflow:
       kind: "requirement"
       depends_on: ["parse-readme"]
       pass_when:
-        - "parsed_steps is non-empty list of bash code blocks"
+        - "parsed_steps is non-empty list of board-relevant steps with working_dir context"
       fail_when:
-        - "README.md has no executable bash code blocks"
+        - "No board-executable steps found in README"
         - "README.md cannot be parsed"
       on_pass: "step-execution-loop"
       on_fail: "awaiting_user"
@@ -456,7 +459,7 @@ workflow:
       kind: "validation"
       depends_on: ["diagnose-failure", "verify-fix"]
       pass_when:
-        - "verification_result is success"
+        - "verification_result is success and output_matches_expectation is not false"
       fail_when:
         - "step has been retried 3 times without success"
       on_pass: "next step in loop"
@@ -467,7 +470,7 @@ workflow:
       depends_on: ["end-to-end-validation"]
       pass_when:
         - "e2e_result is success"
-        - "all steps run without silent errors from clean board state"
+        - "all board steps run without silent errors from clean board state"
       fail_when:
         - "e2e_result is failure"
       on_pass: "generate-report"
@@ -497,6 +500,7 @@ workflow:
       - "destructive or unsafe command detected in README step"
       - "external dependency download requiring network"
       - "ambiguous diagnosis (cannot determine README vs code error)"
+      - "unclear board vs x86 section boundary"
     degraded_output_allowed: false
 
   observability:
@@ -511,7 +515,8 @@ workflow:
   completion:
     success_when:
       - "feature branch 'fix/run-on-ax-board' exists with all fix commits"
-      - "every parsed README step passes on board"
+      - "every board-relevant parsed README step passes on board"
+      - "directory context tracking was correct across all steps"
       - "end-to-end validation passes"
       - "README-fix-report.md is generated with one entry per fix"
       - "report is NOT committed to git"
@@ -519,7 +524,7 @@ workflow:
       - "required dashboard is unavailable and no retry remains"
       - "no AX board is available for any chip"
       - "user declines to provide required input at a blocked gate"
-      - "README.md has no executable steps"
+      - "no board-executable steps found in README"
       - "unrecoverable step failure after user declines further fixes"
     final_response:
       include_artifacts: true
