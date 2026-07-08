@@ -11,7 +11,7 @@ Default target is Claude Code:
 EOF
 }
 
-target="${1:---claude}"
+target="${1:---codex}"
 case "$target" in
     --claude)
         TARGET_ROOT="$HOME/.claude"

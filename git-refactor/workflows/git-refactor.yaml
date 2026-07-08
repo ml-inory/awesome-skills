@@ -1,0 +1,527 @@
+workflow:
+  schema_version: "1.0"
+  name: "git-refactor"
+  entry_skill: "skills/git-refactor/SKILL.md"
+  mode: "guided"
+  task_type: "iterative"
+  visibility: "collapsed_by_default"
+  requirement:
+    goal: "Take a local directory of a GitHub project, follow its README to set up and run on an AX board via remote-infer, identify and fix all bugs/errors encountered, making the project runnable from scratch on board with minimal mental burden."
+    output:
+      format: "Modified project files, git commits (one per fix), local README-fix-report.md (not committed)"
+      destination: "Local project directory + git repo"
+      consumer: "both"
+    constraints:
+      time_budget: "Bounded by board availability, per-step execution timeout (10 min), and retry budget"
+      cost_budget: "Local network, SSH, internal AX dashboard and board resources only"
+      technology:
+        - "git"
+        - "ssh"
+        - "python"
+        - "shell"
+        - "remote-infer (and all hidden sub-skills)"
+        - "Markdown parsing"
+      security:
+        - "Do not push or force-push to remote"
+        - "Do not guess credentials"
+        - "Do not run destructive board commands without explicit user approval"
+        - "All downloads come from project's own declared dependencies"
+      human_approval_required: true
+    acceptance:
+      checks:
+        - "Project directory is valid and contains a README.md"
+        - "README is parsed, all bash code blocks identified and ordered"
+        - "Feature branch 'fix/run-on-ax-board' is created"
+        - "All README steps are sequentially executed on the selected AX board"
+        - "Each execution failure is auto-analyzed, auto-fixed (≤3 retries), or flagged for user intervention"
+        - "Each independent fix has its own git commit on the feature branch"
+        - "End-to-end: full README path runs on board without silent errors"
+        - "README-fix-report.md is generated locally with one entry per fix"
+        - "README-fix-report.md is NOT committed"
+      metrics:
+        - "Total README steps count"
+        - "Steps succeeded on first attempt"
+        - "Steps auto-fixed and retried"
+        - "Steps requiring user intervention"
+        - "End-to-end board execution success (pass/fail)"
+        - "Total fix commits count"
+      required_artifacts:
+        - "Git branch 'fix/run-on-ax-board' with individual fix commits"
+        - "README-fix-report.md (local, uncommitted)"
+        - "Updated README.md and repaired project code"
+    assumptions:
+      - "The project has a readable README.md in its root"
+      - "The AX board has basic environment (Python3, git, common build tools)"
+      - "User has internal network access to the AX dashboard at http://10.126.35.22:25000/api/devices"
+      - "SSH credentials are available via config/agent"
+      - "Chip priority: AX650N > AX630C > AX650C; ask user if none available"
+    open_questions: []
+
+  capabilities:
+    - id: "remote-infer"
+      purpose: "Full remote-infer workflow for board selection, SSH execution, file transfer, and inference"
+      source: "existing"
+      skill_path: "skills/remote-infer/SKILL.md"
+      permissions: ["SSH to board", "network access to dashboard", "file transfer"]
+      required: true
+    - id: "select-board"
+      purpose: "Query internal dashboard and select an available AX board"
+      source: "existing"
+      skill_path: "skills/remote-infer/hidden/select-board/SKILL.md"
+      permissions: ["network access to dashboard", "execute local python"]
+      required: true
+    - id: "execute-ssh"
+      purpose: "Run remote commands on selected AX board over SSH"
+      source: "existing"
+      skill_path: "skills/remote-infer/hidden/execute-ssh/SKILL.md"
+      permissions: ["SSH to board", "execute approved remote commands"]
+      required: true
+    - id: "transfer-file"
+      purpose: "Upload or download files between local host and board"
+      source: "existing"
+      skill_path: "skills/remote-infer/hidden/transfer-file/SKILL.md"
+      permissions: ["read local files", "write approved paths", "SSH/SCP"]
+      required: false
+    - id: "git-refactor-init"
+      purpose: "Validate project directory, create feature branch, record initial state"
+      source: "generate"
+      skill_path: "skills/git-refactor/hidden/init/SKILL.md"
+      permissions: ["read project directory", "git branch", "git status"]
+      required: true
+    - id: "git-refactor-parse-readme"
+      purpose: "Parse README.md into an ordered list of executable bash code blocks with context"
+      source: "generate"
+      skill_path: "skills/git-refactor/hidden/parse-readme/SKILL.md"
+      permissions: ["read README.md"]
+      required: true
+    - id: "git-refactor-execute-step"
+      purpose: "Execute one parsed README step on the selected AX board via remote-infer"
+      source: "generate"
+      skill_path: "skills/git-refactor/hidden/execute-step/SKILL.md"
+      permissions: ["SSH to board", "execute remote commands", "transfer files"]
+      required: true
+    - id: "git-refactor-diagnose"
+      purpose: "Analyze a failed step: classify as README error, code bug, or environment issue; identify root cause"
+      source: "generate"
+      skill_path: "skills/git-refactor/hidden/diagnose/SKILL.md"
+      permissions: ["read project files", "read error output", "search codebase"]
+      required: true
+    - id: "git-refactor-fix"
+      purpose: "Apply fix to code or README and create a git commit; update the running fix log"
+      source: "generate"
+      skill_path: "skills/git-refactor/hidden/fix/SKILL.md"
+      permissions: ["write project files", "git add", "git commit"]
+      required: true
+    - id: "git-refactor-verify"
+      purpose: "Re-execute the repaired step on board to confirm fix works"
+      source: "generate"
+      skill_path: "skills/git-refactor/hidden/verify/SKILL.md"
+      permissions: ["SSH to board", "execute remote commands"]
+      required: true
+    - id: "git-refactor-report"
+      purpose: "Generate README-fix-report.md summarizing all fixes with root cause, change, and verification"
+      source: "generate"
+      skill_path: "skills/git-refactor/hidden/report/SKILL.md"
+      permissions: ["write README-fix-report.md locally"]
+      required: true
+
+  inputs:
+    - id: "project_dir"
+      type: "directory"
+      required: false
+      source: "user"
+      validation:
+        - "Directory must exist"
+        - "Directory must contain README.md"
+      default: "current working directory"
+    - id: "chip_filter"
+      type: "text"
+      required: false
+      source: "user"
+      validation:
+        - "Must be one of: AX650N, AX630C, AX650C"
+      default: "auto-select priority AX650N > AX630C > AX650C"
+
+  outputs:
+    - id: "feature_branch"
+      type: "text"
+      destination: "git branch 'fix/run-on-ax-board'"
+      required: true
+      validation:
+        - "Branch exists and is checked out"
+    - id: "fix_commits"
+      type: "code"
+      destination: "git log on feature branch"
+      required: true
+      validation:
+        - "One commit per independent fix"
+        - "Commit message describes fix"
+    - id: "fix_report"
+      type: "file"
+      destination: "README-fix-report.md in project root"
+      required: true
+      validation:
+        - "File exists and is not staged in git"
+        - "Contains one entry per fix with: original issue, root cause, fix, verification"
+    - id: "updated_readme"
+      type: "file"
+      destination: "README.md in project root"
+      required: false
+      validation:
+        - "All confusing or incorrect sections are clarified"
+    - id: "updated_code"
+      type: "code"
+      destination: "project files in working tree"
+      required: false
+      validation:
+        - "All bugs encountered along README path are fixed"
+
+  state_machine:
+    initial: "draft"
+    states:
+      - draft
+      - awaiting_user
+      - ready
+      - running
+      - validating
+      - retrying
+      - rolling_back
+      - degraded
+      - blocked
+      - failed
+      - succeeded
+    terminal:
+      - blocked
+      - failed
+      - succeeded
+    transitions:
+      - from: draft
+        to: awaiting_user
+        when: "project_dir is missing or README.md not found"
+      - from: draft
+        to: awaiting_user
+        when: "no AX board is available for any chip and user must decide"
+      - from: draft
+        to: ready
+        when: "project is valid, README parsed, board selected"
+      - from: ready
+        to: running
+        when: "step execution loop starts"
+      - from: running
+        to: validating
+        when: "all README steps complete"
+      - from: validating
+        to: succeeded
+        when: "end-to-end board execution passes and report is generated"
+      - from: validating
+        to: retrying
+        when: "a recoverable validation check fails and retry budget remains"
+      - from: retrying
+        to: running
+        when: "repair step is scheduled for re-execution"
+      - from: running
+        to: rolling_back
+        when: "a fix introduces a regression and rollback is possible"
+      - from: rolling_back
+        to: running
+        when: "rollback complete, alternative fix to be attempted"
+      - from: rolling_back
+        to: failed
+        when: "rollback complete but no remaining fix strategy"
+      - from: running
+        to: blocked
+        when: "required user input or credential is unavailable"
+      - from: running
+        to: awaiting_user
+        when: "step fails after 3 auto-fix retries and user must decide"
+
+  steps:
+    - id: "init-project"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/init/SKILL.md"
+      description: "Validate project directory, confirm README.md exists, create feature branch 'fix/run-on-ax-board' from current branch"
+      depends_on: []
+      parallel_group: null
+      inputs: ["project_dir"]
+      outputs: ["init_status", "original_branch"]
+      timeout_seconds: 60
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+
+    - id: "select-board"
+      kind: "agent"
+      skill: "skills/remote-infer/hidden/select-board/SKILL.md"
+      description: "Select an available AX board with chip priority AX650N > AX630C > AX650C. If none available, ask user."
+      depends_on: ["init-project"]
+      parallel_group: null
+      inputs: ["chip_filter"]
+      outputs: ["selected_board"]
+      timeout_seconds: 60
+      retry:
+        max_attempts: 3
+        retry_on: ["dashboard_unavailable", "timeout"]
+        backoff: "fixed"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+
+    - id: "parse-readme"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/parse-readme/SKILL.md"
+      description: "Parse README.md, extract all bash code blocks in order, annotate with line numbers and surrounding context"
+      depends_on: ["init-project"]
+      parallel_group: null
+      inputs: ["project_dir/README.md"]
+      outputs: ["parsed_steps"]
+      timeout_seconds: 30
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "summarized"
+
+    - id: "step-execution-loop"
+      kind: "gate"
+      skill: "skills/git-refactor/SKILL.md"
+      description: "Iterate over parsed_steps. For each step: execute on board → if fail: diagnose → fix → commit → verify. Retry up to 3 times per step. After 3 failures: ask user."
+      depends_on: ["select-board", "parse-readme"]
+      parallel_group: null
+      inputs: ["parsed_steps", "selected_board"]
+      outputs: ["execution_log", "fix_log"]
+      timeout_seconds: null
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "user_visible"
+
+    - id: "execute-one-step"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/execute-step/SKILL.md"
+      description: "Execute a single parsed README step on the selected AX board. Transfer required files if the step references local paths. Capture stdout, stderr, exit code."
+      depends_on: []
+      parallel_group: null
+      inputs: ["step", "selected_board", "project_dir"]
+      outputs: ["step_result"]
+      timeout_seconds: 600
+      retry:
+        max_attempts: 1
+        retry_on: ["ssh_timeout", "transient_network"]
+        backoff: "fixed"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "user_visible"
+
+    - id: "diagnose-failure"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/diagnose/SKILL.md"
+      description: "Analyze step_result failure. Search codebase for referenced files/commands/errors. Classify as: README error, code bug, missing dependency, environment issue. Identify root cause and file locations."
+      depends_on: []
+      parallel_group: null
+      inputs: ["step_result", "step", "project_dir"]
+      outputs: ["diagnosis"]
+      timeout_seconds: 120
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "summarized"
+
+    - id: "apply-fix"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/fix/SKILL.md"
+      description: "Apply the diagnosed fix: edit code or README, ensure both are consistent. Git add and commit with descriptive message. Append entry to fix_log."
+      depends_on: []
+      parallel_group: null
+      inputs: ["diagnosis", "project_dir"]
+      outputs: ["fix_commit", "fix_log_entry"]
+      timeout_seconds: 120
+      retry:
+        max_attempts: 1
+        retry_on: ["git_conflict"]
+        backoff: "none"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+
+    - id: "verify-fix"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/verify/SKILL.md"
+      description: "Re-execute the repaired step on the board. If it passes, mark the fix as verified in fix_log. If it still fails, return to diagnosis."
+      depends_on: []
+      parallel_group: null
+      inputs: ["step", "selected_board", "project_dir", "fix_log_entry"]
+      outputs: ["verification_result"]
+      timeout_seconds: 600
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "user_visible"
+
+    - id: "end-to-end-validation"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/execute-step/SKILL.md"
+      description: "After all steps pass individually, run the full README path end-to-end on a fresh board environment to confirm everything works together"
+      depends_on: ["step-execution-loop"]
+      parallel_group: null
+      inputs: ["parsed_steps", "selected_board", "project_dir"]
+      outputs: ["e2e_result"]
+      timeout_seconds: 1800
+      retry:
+        max_attempts: 1
+        retry_on: ["transient_failure"]
+        backoff: "fixed"
+      on_failure:
+        action: "ask_user"
+        target_step: null
+      visibility: "user_visible"
+
+    - id: "generate-report"
+      kind: "agent"
+      skill: "skills/git-refactor/hidden/report/SKILL.md"
+      description: "Generate README-fix-report.md from fix_log. Each entry: original issue, root cause, fix details (files/lines changed), verification result. Do NOT git add this file."
+      depends_on: ["end-to-end-validation"]
+      parallel_group: null
+      inputs: ["fix_log", "project_dir"]
+      outputs: ["report_path"]
+      timeout_seconds: 30
+      retry:
+        max_attempts: 0
+        retry_on: []
+        backoff: "none"
+      on_failure:
+        action: "fail"
+        target_step: null
+      visibility: "user_visible"
+
+  gates:
+    - id: "requirement-complete"
+      kind: "requirement"
+      depends_on: ["init-project"]
+      pass_when:
+        - "project_dir exists and contains README.md"
+        - "git feature branch created successfully"
+      fail_when:
+        - "project_dir does not exist"
+        - "README.md not found"
+        - "git is not available"
+      on_pass: "select-board"
+      on_fail: "awaiting_user"
+
+    - id: "board-available"
+      kind: "capability"
+      depends_on: ["select-board"]
+      pass_when:
+        - "dashboard returns at least one free AX board matching chip priority"
+      fail_when:
+        - "dashboard unavailable after retry"
+        - "no available board matches any chip and user does not provide alternative"
+      on_pass: "parse-readme"
+      on_fail: "blocked"
+
+    - id: "steps-parsed"
+      kind: "requirement"
+      depends_on: ["parse-readme"]
+      pass_when:
+        - "parsed_steps is non-empty list of bash code blocks"
+      fail_when:
+        - "README.md has no executable bash code blocks"
+        - "README.md cannot be parsed"
+      on_pass: "step-execution-loop"
+      on_fail: "awaiting_user"
+
+    - id: "step-retry-gate"
+      kind: "validation"
+      depends_on: ["diagnose-failure", "verify-fix"]
+      pass_when:
+        - "verification_result is success"
+      fail_when:
+        - "step has been retried 3 times without success"
+      on_pass: "next step in loop"
+      on_fail: "awaiting_user"
+
+    - id: "e2e-valid"
+      kind: "validation"
+      depends_on: ["end-to-end-validation"]
+      pass_when:
+        - "e2e_result is success"
+        - "all steps run without silent errors from clean board state"
+      fail_when:
+        - "e2e_result is failure"
+      on_pass: "generate-report"
+      on_fail: "awaiting_user"
+
+    - id: "report-ready"
+      kind: "validation"
+      depends_on: ["generate-report"]
+      pass_when:
+        - "README-fix-report.md exists and is not git staged"
+        - "report has one entry per fix"
+      fail_when:
+        - "report file cannot be written"
+      on_pass: "succeeded"
+      on_fail: "failed"
+
+  failure_policy:
+    default_action: "fail"
+    max_total_attempts: 3
+    rollback_required_for:
+      - "partially applied fix that introduces a regression in previously passing steps"
+      - "failed file transfer that left incomplete state on board"
+    ask_user_for:
+      - "project directory not found or README.md missing"
+      - "no AX board available for any chip"
+      - "step fails after 3 auto-fix retries"
+      - "destructive or unsafe command detected in README step"
+      - "external dependency download requiring network"
+      - "ambiguous diagnosis (cannot determine README vs code error)"
+    degraded_output_allowed: false
+
+  observability:
+    progress_updates: "step"
+    audit_log:
+      enabled: true
+      include_hidden_steps: true
+    artifacts:
+      record_intermediate_outputs: true
+      retention: "workflow-local"
+
+  completion:
+    success_when:
+      - "feature branch 'fix/run-on-ax-board' exists with all fix commits"
+      - "every parsed README step passes on board"
+      - "end-to-end validation passes"
+      - "README-fix-report.md is generated with one entry per fix"
+      - "report is NOT committed to git"
+    failure_when:
+      - "required dashboard is unavailable and no retry remains"
+      - "no AX board is available for any chip"
+      - "user declines to provide required input at a blocked gate"
+      - "README.md has no executable steps"
+      - "unrecoverable step failure after user declines further fixes"
+    final_response:
+      include_artifacts: true
+      include_assumptions: true
+      include_limitations: true
